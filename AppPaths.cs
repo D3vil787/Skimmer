@@ -8,14 +8,17 @@ namespace Skimmer;
 static class AppPaths
 {
     public static readonly string DataDir;
+    public static readonly string ExeDir;
 
     static AppPaths()
     {
         string exeDir = null;
         try { exeDir = Path.GetDirectoryName(Environment.ProcessPath); } catch { }
         if (string.IsNullOrEmpty(exeDir)) exeDir = AppContext.BaseDirectory;
+        ExeDir = exeDir;
 
-        if (CanWrite(exeDir))
+        // Started straight from a zip (Windows unpacks it into %TEMP% each time) - nothing would persist there.
+        if (!IsTemp(exeDir) && CanWrite(exeDir))
         {
             DataDir = exeDir;
         }
@@ -29,6 +32,17 @@ static class AppPaths
     public static string SettingsFile => Path.Combine(DataDir, "Skimmer.settings.json");
     public static string CacheDir => Path.Combine(DataDir, "SkimmerCache");
     public static string LogFile => Path.Combine(DataDir, "Skimmer.log");
+
+    static bool IsTemp(string dir)
+    {
+        try
+        {
+            string temp = Path.GetFullPath(Path.GetTempPath()).TrimEnd('\\') + "\\";
+            string d = Path.GetFullPath(dir).TrimEnd('\\') + "\\";
+            return d.StartsWith(temp, StringComparison.OrdinalIgnoreCase);
+        }
+        catch { return false; }
+    }
 
     static bool CanWrite(string dir)
     {

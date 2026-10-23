@@ -12,6 +12,8 @@ compact on-disk cache, and the next time you open that folder everything appears
 ## Features
 
 - **Explorer-style layout** – folder tree + thumbnail grid, address bar, back / forward / up, drag & drop a folder or photo onto the window.
+- **Subfolders as tiles** with a preview of the first photos inside; going *Up* selects the folder you came from.
+- **Explorer-style selection** – Ctrl+click, Shift+click, Shift+arrows, Ctrl+A; `Del` sends to the Recycle Bin, `Shift+Del` deletes permanently (Windows asks). Works in the full-screen viewer too, handy for culling.
 - **Built for huge folders** – the grid is fully virtual, so 50,000 photos in one folder cost no more than 50.
 - **Instant thumbnails from a persistent cache** – open a folder a second time and all previews are already there.
 - **Background indexing** – while the app is running it can index folders you choose in *Settings* (with subfolders) and re-scan them periodically, so your cameras' / photo archive folders are always ready.
@@ -19,6 +21,7 @@ compact on-disk cache, and the next time you open that folder everything appears
 - **EXIF orientation**, natural sorting (`img2` before `img10`), sort by name / date / size.
 - **Portable** – settings (`Skimmer.settings.json`) and cache (`SkimmerCache\`) live next to `Skimmer.exe`. If that folder is read-only, `%LOCALAPPDATA%\Skimmer` is used.
 - **Self-cleaning cache** – cache of folders you have not opened for N days (default 30) is deleted automatically, plus a total size cap (default 4 GB).
+- **Self-update from GitHub Releases** – a link appears in the status bar when a new version is out; the new exe is downloaded, verified by SHA-256 and swapped in place.
 - Dark theme, Russian and English UI (follows Windows language, can be forced in Settings).
 
 Supported formats: JPEG, PNG, BMP, GIF, TIFF, ICO, JPEG XR and – if the corresponding Windows codecs are installed – WebP and HEIC.
@@ -28,7 +31,9 @@ Supported formats: JPEG, PNG, BMP, GIF, TIFF, ICO, JPEG XR and – if the corres
 | Where | Key | Action |
 |---|---|---|
 | Grid | arrows, `PgUp`/`PgDn`, `Home`/`End` | move selection |
-| Grid | `Enter`, double click | open full-screen viewer |
+| Grid | `Enter`, double click | open photo / open folder |
+| Grid | Ctrl+click, Shift+click, `Shift`+arrows, `Ctrl+A` | multiple selection |
+| Grid | `Del` / `Shift+Del` | to Recycle Bin / delete permanently |
 | Grid | right click | open / show in Explorer / copy path / copy file |
 | Anywhere | `F5` | refresh folder |
 | Anywhere | `Alt+←` / `Alt+→` / `Alt+↑` | back / forward / up |
@@ -38,6 +43,7 @@ Supported formats: JPEG, PNG, BMP, GIF, TIFF, ICO, JPEG XR and – if the corres
 | Viewer | `Home` / `End` | first / last photo |
 | Viewer | `Z` or middle click | toggle 100 % (drag to pan) |
 | Viewer | `I` | toggle info bar |
+| Viewer | `Del` / `Shift+Del` | delete the current photo and go to the next one |
 | Viewer | `Esc`, `Enter`, double click | close |
 
 You can also start it as `Skimmer.exe "D:\Photos"` or `Skimmer.exe "D:\Photos\img.jpg"` (handy for *Open with*).
@@ -52,6 +58,14 @@ Grab the latest build from [**Releases**](../../releases) (or from the *Actions*
 | `Skimmer-small.exe` | < 1 MB | [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0) |
 
 Windows 10 / 11, x64.
+
+## Updates
+
+Skimmer checks `github.com/D3vil787/Skimmer/releases/latest` a few seconds after start and every 6 hours
+(can be turned off in *Settings*, there is also *Check now*). When a newer version exists, a link appears in
+the status bar. *Update and restart* downloads the same variant you run (`Skimmer.exe` or `Skimmer-small.exe`),
+checks it against `SHA256SUMS.txt` from the release, renames the running exe to `*.old`, puts the new one in its
+place and restarts. Settings and cache are kept. If the program folder is read-only, the release page is opened instead.
 
 ## How the cache works
 
@@ -82,7 +96,11 @@ or
 dotnet publish Skimmer.csproj -c Release -p:PublishSingleFile=true -o out
 ```
 
-The result is `out\Skimmer.exe`. Pushing a tag like `v1.0.0` makes GitHub Actions build and attach both variants to a release.
+The result is `out\Skimmer.exe`.
+
+**Releases** are automatic: every push to `main` is built by GitHub Actions, and when `<Version>` in `Skimmer.csproj`
+has no matching `vX.Y.Z` tag yet, the workflow creates that release with `Skimmer.exe`, `Skimmer-small.exe` and
+`SHA256SUMS.txt`. So releasing = bumping the version.
 
 ## License
 

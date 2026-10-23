@@ -14,8 +14,12 @@ static class Program
         System.Windows.Forms.Application.ThreadException += (s, e) => LogAndShow(e.Exception);
         AppDomain.CurrentDomain.UnhandledException += (s, e) => LogAndShow(e.ExceptionObject as Exception);
 
-        string arg = args.Length > 0 ? args[0] : null;
+        UpdateService.CleanupLeftovers();
+
+        string arg = args.FirstOrDefault(a => !a.StartsWith("--", StringComparison.Ordinal));
         System.Windows.Forms.Application.Run(new MainForm(arg));
+
+        UpdateService.StartPendingRestart();
     }
 
     static void LogAndShow(Exception ex)
