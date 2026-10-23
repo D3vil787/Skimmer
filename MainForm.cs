@@ -27,6 +27,7 @@ sealed class MainForm : Form
     readonly System.Windows.Forms.Timer updTimer = new() { Interval = 6 * 60 * 60 * 1000 };
     readonly BackgroundIndexer indexer;
     readonly string startArg;
+    readonly string startupLastFolder;   // read before any UI event can overwrite it
 
     Button btnBack, btnFwd, btnUp, btnRefresh, btnDesc, btnSettings;
 
@@ -49,6 +50,7 @@ sealed class MainForm : Form
     {
         this.startArg = startArg;
         var s = AppSettings.Current;
+        startupLastFolder = s.LastFolder;
 
         Text = L.T("app.title");
         AutoScaleMode = AutoScaleMode.Dpi;
@@ -236,7 +238,10 @@ sealed class MainForm : Form
         tree.BeforeExpand += (_, e) => LoadChildren(e.Node);
         tree.AfterSelect += (_, e) =>
         {
+            // Only real user clicks / keys. Windows auto-selects the first node when an empty-selection
+            // tree gets focus (Action = Unknown) - that used to open "Desktop" and overwrite the last folder.
             if (suppressTreeSelect) return;
+            if (e.Action != TreeViewAction.ByMouse && e.Action != TreeViewAction.ByKeyboard) return;
             if (e.Node.Tag is string p && p != DummyTag && Directory.Exists(p)) OpenFolder(p, true);
         };
         tree.HandleCreated += (_, _) => Theme.DarkControl(tree);
@@ -275,6 +280,7 @@ sealed class MainForm : Form
 
         BuildContextMenu();
         BuildTree();
+        ActiveControl = grid;
     }
 
     static ImageList MakeIcons()
@@ -892,7 +898,7 @@ sealed class MainForm : Form
         }
         if (start == null)
         {
-            if (!string.IsNullOrEmpty(s.LastFolder) && Directory.Exists(s.LastFolder)) start = s.LastFolder;
+            if (!string.IsNullOrEmpty(startupLastFolder) && Directory.Exists(startupLastFolder)) start = startupLastFolder;
             else
             {
                 start = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
