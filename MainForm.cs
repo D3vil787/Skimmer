@@ -244,8 +244,6 @@ sealed class MainForm : Form
         split.Dock = DockStyle.Fill;
         split.Orientation = Orientation.Vertical;
         split.BackColor = Theme.Border;
-        split.Panel1MinSize = 140;
-        split.Panel2MinSize = 300;
         split.FixedPanel = FixedPanel.Panel1;
         split.SplitterWidth = 3;
         split.Panel1.BackColor = Theme.Back;
@@ -713,7 +711,17 @@ sealed class MainForm : Form
     {
         base.OnShown(e);
         var s = AppSettings.Current;
-        try { split.SplitterDistance = Math.Clamp(s.TreeWidth, 140, Math.Max(141, Width - 340)); } catch { }
+        // Min sizes are set only now, when the container already has its real width
+        // (setting them earlier throws "SplitterDistance must be between ...").
+        try
+        {
+            int w = split.Width;
+            split.Panel1MinSize = Math.Min(140, Math.Max(25, w / 4));
+            split.Panel2MinSize = Math.Min(300, Math.Max(25, w / 3));
+            int max = Math.Max(split.Panel1MinSize, w - split.Panel2MinSize - split.SplitterWidth);
+            split.SplitterDistance = Math.Clamp(s.TreeWidth, split.Panel1MinSize, max);
+        }
+        catch { }
 
         string start = null;
         if (!string.IsNullOrEmpty(startArg))
