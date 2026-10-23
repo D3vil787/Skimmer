@@ -7,6 +7,8 @@ namespace Skimmer;
 /// <summary>
 /// Owner-drawn, fully virtual thumbnail grid. Only the tiles on screen are painted,
 /// so a folder with tens of thousands of photos costs nothing extra.
+/// Items: subfolders first, then images (see FolderSession). Explorer-style selection:
+/// click, Ctrl+click, Shift+click, Shift+arrows, Ctrl+A.
 /// </summary>
 sealed class ThumbGrid : Control
 {
@@ -20,8 +22,11 @@ sealed class ThumbGrid : Control
     readonly LinkedList<LruItem> lruList = new();
     readonly Dictionary<int, LinkedListNode<LruItem>> lru = new();
     readonly HashSet<int> failed = new();
+    readonly HashSet<int> selection = new();
     readonly SolidBrush tileBrush = new(Theme.Tile);
     readonly SolidBrush selBrush = new(Theme.TileSelected);
+    readonly SolidBrush folderBack = new(Color.FromArgb(200, 160, 60));
+    readonly SolidBrush folderFront = new(Color.FromArgb(235, 195, 85));
     readonly Pen focusPen = new(Theme.Accent, 2f);
 
     FolderSession session;
@@ -29,12 +34,14 @@ sealed class ThumbGrid : Control
     bool showNames = true;
     int cellW, cellH, cols, offX, maxScroll, total;
     int scroll;
-    int selected = -1;
+    int focus = -1;      // "current" item (keyboard focus)
+    int anchor = -1;     // start of Shift-range
     bool updatingScroll;
 
     public event Action<int> ItemActivated;
-    public event Action<int> SelectionChanged;
+    public event Action SelectionChanged;
     public event Action<int, Point> ItemContext;
+    public event Action<bool> DeleteRequested;   // true = permanent (Shift+Del)
 
     public ThumbGrid()
     {
@@ -67,8 +74,23 @@ sealed class ThumbGrid : Control
 
     // ------------------------------------------------------------ public API
 
-    public int Count => session?.Files.Length ?? 0;
-    public int SelectedIndex => selected;
+    public int Count => session?.ItemCount ?? 0;
+
+    /// <summary>The focused item (grid index) or -1.</summary>
+    public int FocusedIndex => focus;
+
+    /// <summary>All selected grid indices in ascending order.</summary>
+    public List<int> SelectedIndices
+    {
+        get
+        {
+            var l = selection.ToList();
+            l.Sort();
+            return l;
+        }
+    }
+
+    public int SelectedCount => selection.Count;
 
     public int TileSize
     {
@@ -77,7 +99,7 @@ sealed class ThumbGrid : Control
         {
             tileSize = Math.Clamp(value, 64, 320);
             RecalcLayout();
-            if (selected >= 0) EnsureVisible(selected);
+            if (focus >= 0) EnsureVisible(focus);
             Invalidate();
         }
     }
@@ -89,7 +111,7 @@ sealed class ThumbGrid : Control
         {
             showNames = value;
             RecalcLayout();
-            if (selected >= 0) EnsureVisible(selected);
+            if (focus >= 0) EnsureVisible(focus);
             Invalidate();
         }
     }
@@ -98,23 +120,46 @@ sealed class ThumbGrid : Control
     {
         ClearCache();
         session = s;
-        selected = -1;
+        selection.Clear();
+        focus = anchor = -1;
         scroll = 0;
         RecalcLayout();
-        if (s != null && s.Files.Length > 0) selected = 0;
+        if (s != null && s.ItemCount > 0)
+        {
+            focus = anchor = 0;
+            selection.Add(0);
+        }
         Invalidate();
-        SelectionChanged?.Invoke(selected);
+        SelectionChanged?.Invoke();
     }
 
+    /// <summary>Selects exactly one item.</summary>
     public void SelectIndex(int i, bool ensureVisible = true)
     {
-        if (session == null || session.Files.Length == 0) return;
-        i = Math.Clamp(i, 0, session.Files.Length - 1);
-        bool changed = i != selected;
-        selected = i;
+        if (session == null || session.ItemCount == 0) return;
+        i = Math.Clamp(i, 0, session.ItemCount - 1);
+        selection.Clear();
+        selection.Add(i);
+        focus = anchor = i;
         if (ensureVisible) EnsureVisible(i);
         Invalidate();
-        if (changed) SelectionChanged?.Invoke(i);
+        SelectionChanged?.Invoke();
+    }
+
+    public void SelectAll()
+    {
+        if (session == null || session.ItemCount == 0) return;
+        selection.Clear();
+        for (int i = 0; i < session.ItemCount; i++) selection.Add(i);
+        Invalidate();
+        SelectionChanged?.Invoke();
+    }
+
+    void SelectRange(int from, int to, bool add)
+    {
+        if (!add) selection.Clear();
+        int a = Math.Min(from, to), b = Math.Max(from, to);
+        for (int i = a; i <= b; i++) selection.Add(i);
     }
 
     // ------------------------------------------------------------ layout
@@ -188,8 +233,8 @@ sealed class ThumbGrid : Control
         {
             n++;
             any = true;
-            if (r.Failed || r.Bmp == null) { failed.Add(r.Index); r.Bmp?.Dispose(); }
-            else AddToCache(r.Index, r.Bmp);
+            if (r.Failed || r.Bmp == null) { failed.Add(r.GridIndex); r.Bmp?.Dispose(); }
+            else AddToCache(r.GridIndex, r.Bmp);
         }
         if (any) Invalidate();
     }
@@ -233,6 +278,8 @@ sealed class ThumbGrid : Control
         failed.Clear();
     }
 
+    bool NeedsThumb(int i) => !lru.ContainsKey(i) && !failed.Contains(i);
+
     // ------------------------------------------------------------ painting
 
     protected override void OnPaint(PaintEventArgs e)
@@ -240,7 +287,7 @@ sealed class ThumbGrid : Control
         var g = e.Graphics;
         g.Clear(BackColor);
         if (session == null) return;
-        int count = session.Files.Length;
+        int count = session.ItemCount;
         if (count == 0)
         {
             var area = new Rectangle(0, 0, Math.Max(1, Width - vsb.Width), Height);
@@ -265,18 +312,22 @@ sealed class ThumbGrid : Control
             int x = offX + col * cellW;
             int y = row * cellH - scroll;
             var cell = new Rectangle(x + 4, y + 4, cellW - 8, cellH - 8);
-            if (!cell.IntersectsWith(e.ClipRectangle)) { if (!lru.ContainsKey(i) && !failed.Contains(i)) wanted.Add(i); continue; }
+            if (!cell.IntersectsWith(e.ClipRectangle)) { if (NeedsThumb(i)) wanted.Add(i); continue; }
 
-            bool sel = i == selected;
+            bool sel = selection.Contains(i);
             g.FillRectangle(sel ? selBrush : tileBrush, cell);
 
             var imgArea = new Rectangle(cell.X + 4, cell.Y + 4, cell.Width - 8, tile);
             var bmp = GetCached(i);
-            if (bmp != null)
+
+            if (session.IsFolder(i))
             {
-                float k = Math.Min((float)imgArea.Width / bmp.Width, (float)imgArea.Height / bmp.Height);
-                int w = Math.Max(1, (int)(bmp.Width * k)), h = Math.Max(1, (int)(bmp.Height * k));
-                g.DrawImage(bmp, imgArea.X + (imgArea.Width - w) / 2, imgArea.Y + (imgArea.Height - h) / 2, w, h);
+                DrawFolder(g, imgArea, bmp);
+                if (bmp == null && !failed.Contains(i)) wanted.Add(i);
+            }
+            else if (bmp != null)
+            {
+                DrawFit(g, bmp, imgArea);
             }
             else if (failed.Contains(i))
             {
@@ -288,12 +339,12 @@ sealed class ThumbGrid : Control
             if (showNames)
             {
                 var nameArea = new Rectangle(cell.X + 2, imgArea.Bottom + 2, cell.Width - 4, cell.Bottom - imgArea.Bottom - 4);
-                TextRenderer.DrawText(g, session.Files[i].Name, Font, nameArea, Theme.Text,
+                TextRenderer.DrawText(g, session.ItemName(i), Font, nameArea, Theme.Text,
                     TextFormatFlags.EndEllipsis | TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter |
                     TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding);
             }
 
-            if (sel && Focused)
+            if (i == focus && Focused)
                 g.DrawRectangle(focusPen, cell.X + 1, cell.Y + 1, cell.Width - 2, cell.Height - 2);
         }
 
@@ -301,12 +352,59 @@ sealed class ThumbGrid : Control
         int pf = PrefetchRows * cols;
         int rangeFirst = Math.Max(0, first - pf);
         int rangeLast = Math.Min(count - 1, last + pf);
-        session.VisFirst = rangeFirst;
-        session.VisLast = rangeLast;
+        session.SetVisibleRange(rangeFirst, rangeLast);
 
-        for (int i = last + 1; i <= rangeLast; i++) if (!lru.ContainsKey(i) && !failed.Contains(i)) wanted.Add(i);
-        for (int i = first - 1; i >= rangeFirst; i--) if (!lru.ContainsKey(i) && !failed.Contains(i)) wanted.Add(i);
+        for (int i = last + 1; i <= rangeLast; i++) if (NeedsThumb(i)) wanted.Add(i);
+        for (int i = first - 1; i >= rangeFirst; i--) if (NeedsThumb(i)) wanted.Add(i);
         if (wanted.Count > 0) session.Request(wanted);
+    }
+
+    static void DrawFit(Graphics g, Bitmap bmp, Rectangle area)
+    {
+        float k = Math.Min((float)area.Width / bmp.Width, (float)area.Height / bmp.Height);
+        int w = Math.Max(1, (int)(bmp.Width * k)), h = Math.Max(1, (int)(bmp.Height * k));
+        g.DrawImage(bmp, area.X + (area.Width - w) / 2, area.Y + (area.Height - h) / 2, w, h);
+    }
+
+    /// <summary>Folder shape; the preview mosaic (if any) sits inside the folder's front panel.</summary>
+    void DrawFolder(Graphics g, Rectangle area, Bitmap preview)
+    {
+        int s = Math.Min(area.Width, area.Height);
+        int w = (int)(s * 0.92), h = (int)(s * 0.74);
+        int x = area.X + (area.Width - w) / 2;
+        int y = area.Y + (area.Height - h) / 2;
+        int tabW = w * 2 / 5, tabH = Math.Max(4, h / 9);
+        int r = Math.Max(2, s / 40);
+
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        using (var back = RoundRect(new Rectangle(x, y, w, h), r))
+            g.FillPath(folderBack, back);
+        using (var tab = RoundRect(new Rectangle(x, y - tabH + r, tabW, tabH + r), r))
+            g.FillPath(folderBack, tab);
+
+        var front = new Rectangle(x, y + tabH, w, h - tabH);
+        using (var fp = RoundRect(front, r))
+            g.FillPath(folderFront, fp);
+        g.SmoothingMode = SmoothingMode.None;
+
+        if (preview != null)
+        {
+            int inset = Math.Max(3, s / 22);
+            var pr = Rectangle.Inflate(front, -inset, -inset);
+            DrawFit(g, preview, pr);
+        }
+    }
+
+    static GraphicsPath RoundRect(Rectangle r, int radius)
+    {
+        int d = radius * 2;
+        var p = new GraphicsPath();
+        p.AddArc(r.X, r.Y, d, d, 180, 90);
+        p.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+        p.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+        p.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+        p.CloseFigure();
+        return p;
     }
 
     // ------------------------------------------------------------ input
@@ -318,7 +416,7 @@ sealed class ThumbGrid : Control
         if (p.X < offX || col < 0 || col >= cols) return -1;
         int row = (p.Y + scroll) / cellH;
         int i = row * cols + col;
-        return i >= 0 && i < session.Files.Length ? i : -1;
+        return i >= 0 && i < session.ItemCount ? i : -1;
     }
 
     protected override void OnMouseDown(MouseEventArgs e)
@@ -326,17 +424,61 @@ sealed class ThumbGrid : Control
         base.OnMouseDown(e);
         Focus();
         int i = HitTest(e.Location);
-        if (i >= 0)
+        bool ctrl = (ModifierKeys & Keys.Control) != 0;
+        bool shift = (ModifierKeys & Keys.Shift) != 0;
+
+        if (i < 0)
         {
-            SelectIndex(i, false);
-            if (e.Button == MouseButtons.Right) ItemContext?.Invoke(i, PointToScreen(e.Location));
+            if (e.Button == MouseButtons.Left && !ctrl && !shift && selection.Count > 0)
+            {
+                selection.Clear();
+                Invalidate();
+                SelectionChanged?.Invoke();
+            }
+            return;
+        }
+
+        if (e.Button == MouseButtons.Left)
+        {
+            if (shift)
+            {
+                if (anchor < 0) anchor = i;
+                SelectRange(anchor, i, ctrl);
+                focus = i;
+            }
+            else if (ctrl)
+            {
+                if (!selection.Remove(i)) selection.Add(i);
+                focus = anchor = i;
+            }
+            else
+            {
+                selection.Clear();
+                selection.Add(i);
+                focus = anchor = i;
+            }
+            Invalidate();
+            SelectionChanged?.Invoke();
+        }
+        else if (e.Button == MouseButtons.Right)
+        {
+            if (!selection.Contains(i))
+            {
+                selection.Clear();
+                selection.Add(i);
+                anchor = i;
+            }
+            focus = i;
+            Invalidate();
+            SelectionChanged?.Invoke();
+            ItemContext?.Invoke(i, PointToScreen(e.Location));
         }
     }
 
     protected override void OnMouseDoubleClick(MouseEventArgs e)
     {
         base.OnMouseDoubleClick(e);
-        if (e.Button != MouseButtons.Left) return;
+        if (e.Button != MouseButtons.Left || (ModifierKeys & (Keys.Control | Keys.Shift)) != 0) return;
         int i = HitTest(e.Location);
         if (i >= 0) ItemActivated?.Invoke(i);
     }
@@ -352,7 +494,8 @@ sealed class ThumbGrid : Control
         switch (keyData & Keys.KeyCode)
         {
             case Keys.Left: case Keys.Right: case Keys.Up: case Keys.Down:
-            case Keys.PageUp: case Keys.PageDown: case Keys.Home: case Keys.End: case Keys.Enter:
+            case Keys.PageUp: case Keys.PageDown: case Keys.Home: case Keys.End:
+            case Keys.Enter: case Keys.Delete: case Keys.Space:
                 return true;
         }
         return base.IsInputKey(keyData);
@@ -361,10 +504,12 @@ sealed class ThumbGrid : Control
     protected override void OnKeyDown(KeyEventArgs e)
     {
         base.OnKeyDown(e);
-        if (session == null || session.Files.Length == 0) return;
-        int cur = selected < 0 ? 0 : selected;
+        if (session == null || session.ItemCount == 0) return;
+        int count = session.ItemCount;
+        int cur = focus < 0 ? 0 : focus;
         int pageRows = Math.Max(1, ClientSize.Height / cellH - 1);
-        int next = cur;
+        int next;
+
         switch (e.KeyCode)
         {
             case Keys.Left: next = cur - 1; break;
@@ -374,12 +519,51 @@ sealed class ThumbGrid : Control
             case Keys.PageUp: next = cur - pageRows * cols; break;
             case Keys.PageDown: next = cur + pageRows * cols; break;
             case Keys.Home: next = 0; break;
-            case Keys.End: next = session.Files.Length - 1; break;
-            case Keys.Enter: ItemActivated?.Invoke(cur); e.Handled = true; return;
-            default: return;
+            case Keys.End: next = count - 1; break;
+            case Keys.Enter:
+                ItemActivated?.Invoke(cur);
+                e.Handled = true;
+                return;
+            case Keys.Delete:
+                DeleteRequested?.Invoke(e.Shift);
+                e.Handled = true;
+                return;
+            case Keys.A when e.Control:
+                SelectAll();
+                e.Handled = true;
+                return;
+            case Keys.Space when e.Control:
+                if (!selection.Remove(cur)) selection.Add(cur);
+                anchor = cur;
+                Invalidate();
+                SelectionChanged?.Invoke();
+                e.Handled = true;
+                return;
+            default:
+                return;
         }
+
         e.Handled = true;
-        SelectIndex(Math.Clamp(next, 0, session.Files.Length - 1));
+        next = Math.Clamp(next, 0, count - 1);
+        if (e.Shift)
+        {
+            if (anchor < 0) anchor = cur;
+            SelectRange(anchor, next, e.Control);
+            focus = next;
+        }
+        else if (e.Control)
+        {
+            focus = next;      // move focus only; Ctrl+Space toggles
+        }
+        else
+        {
+            selection.Clear();
+            selection.Add(next);
+            focus = anchor = next;
+        }
+        EnsureVisible(focus);
+        Invalidate();
+        SelectionChanged?.Invoke();
     }
 
     protected override void OnGotFocus(EventArgs e) { base.OnGotFocus(e); Invalidate(); }
@@ -394,6 +578,8 @@ sealed class ThumbGrid : Control
             ClearCache();
             tileBrush.Dispose();
             selBrush.Dispose();
+            folderBack.Dispose();
+            folderFront.Dispose();
             focusPen.Dispose();
         }
         base.Dispose(disposing);

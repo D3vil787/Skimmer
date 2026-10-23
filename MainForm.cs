@@ -21,8 +21,10 @@ sealed class MainForm : Form
     readonly ToolStripStatusLabel stLeft = new();
     readonly ToolStripStatusLabel stMid = new();
     readonly ToolStripStatusLabel stRight = new();
+    readonly ToolStripStatusLabel stUpdate = new();
     readonly ContextMenuStrip ctx = new();
     readonly System.Windows.Forms.Timer uiTimer = new() { Interval = 400 };
+    readonly System.Windows.Forms.Timer updTimer = new() { Interval = 6 * 60 * 60 * 1000 };
     readonly BackgroundIndexer indexer;
     readonly string startArg;
 
@@ -36,6 +38,9 @@ sealed class MainForm : Form
     int openTicket;
     bool suppressTreeSelect;
     string pendingOpenFile;
+    string pendingSelectName;   // select this item after the next folder load
+    int pendingSelectGrid = -1; // ...or this grid index if the name is gone
+    UpdateInfo pendingUpdate;
     int ctxIndex = -1;
     bool cacheCleared;
     DateTime lastClean = DateTime.MinValue;
@@ -205,7 +210,14 @@ sealed class MainForm : Form
             l.TextAlign = ContentAlignment.MiddleLeft;
         }
         stMid.Spring = true;
-        status.Items.AddRange(new ToolStripItem[] { stLeft, stMid, stRight });
+        stUpdate.IsLink = true;
+        stUpdate.LinkBehavior = LinkBehavior.HoverUnderline;
+        stUpdate.LinkColor = Color.FromArgb(110, 180, 255);
+        stUpdate.ActiveLinkColor = Color.FromArgb(150, 205, 255);
+        stUpdate.VisitedLinkColor = Color.FromArgb(110, 180, 255);
+        stUpdate.Visible = false;
+        stUpdate.Click += (_, _) => ShowUpdateDialog(pendingUpdate);
+        status.Items.AddRange(new ToolStripItem[] { stLeft, stMid, stUpdate, stRight });
 
         // ---- tree
         tree.Dock = DockStyle.Fill;
@@ -236,9 +248,10 @@ sealed class MainForm : Form
         grid.AllowDrop = true;
         grid.DragEnter += OnDragEnterFiles;
         grid.DragDrop += OnDropFiles;
-        grid.ItemActivated += OpenViewer;
+        grid.ItemActivated += OnItemActivated;
         grid.SelectionChanged += OnSelectionChanged;
         grid.ItemContext += ShowItemMenu;
+        grid.DeleteRequested += DeleteSelected;
 
         // ---- split
         split.Dock = DockStyle.Fill;
@@ -307,17 +320,28 @@ sealed class MainForm : Form
         ctx.ForeColor = Theme.Text;
 
         var open = new ToolStripMenuItem(L.T("ctx.open")) { ForeColor = Theme.Text };
-        open.Click += (_, _) => { if (ctxIndex >= 0) OpenViewer(ctxIndex); };
+        open.Click += (_, _) => { if (ctxIndex >= 0) OnItemActivated(ctxIndex); };
         var explorer = new ToolStripMenuItem(L.T("ctx.explorer")) { ForeColor = Theme.Text };
         explorer.Click += (_, _) => ShowInExplorer(ctxIndex);
         var copyPath = new ToolStripMenuItem(L.T("ctx.copypath")) { ForeColor = Theme.Text };
-        copyPath.Click += (_, _) => CopyPath(ctxIndex);
+        copyPath.Click += (_, _) => CopyPaths();
         var copyFile = new ToolStripMenuItem(L.T("ctx.copyfile")) { ForeColor = Theme.Text };
-        copyFile.Click += (_, _) => CopyFile(ctxIndex);
-        var refresh = new ToolStripMenuItem(L.T("ctx.refresh")) { ForeColor = Theme.Text };
+        copyFile.Click += (_, _) => CopyFiles();
+        var delete = new ToolStripMenuItem(L.T("ctx.delete")) { ForeColor = Theme.Text, ShortcutKeyDisplayString = "Del" };
+        delete.Click += (_, _) => DeleteSelected(false);
+        var refresh = new ToolStripMenuItem(L.T("ctx.refresh")) { ForeColor = Theme.Text, ShortcutKeyDisplayString = "F5" };
         refresh.Click += (_, _) => Reload();
 
-        ctx.Items.AddRange(new ToolStripItem[] { open, new ToolStripSeparator(), explorer, copyPath, copyFile, new ToolStripSeparator(), refresh });
+        ctx.Items.AddRange(new ToolStripItem[]
+        {
+            open, new ToolStripSeparator(), explorer, copyPath, copyFile, new ToolStripSeparator(),
+            delete, new ToolStripSeparator(), refresh
+        });
+        ctx.Opening += (_, _) =>
+        {
+            var s = session;
+            delete.Enabled = s != null && grid.SelectedIndices.Any(g => !s.IsFolder(g));
+        };
     }
 
     // ================================================================ folder tree
@@ -457,8 +481,17 @@ sealed class MainForm : Form
         }
         currentPath = path;
         addr.Text = path;
-        AppSettings.Current.LastFolder = path;
+        if (!string.Equals(AppSettings.Current.LastFolder, path, StringComparison.OrdinalIgnoreCase))
+        {
+            AppSettings.Current.LastFolder = path;
+            AppSettings.Current.Save();
+        }
         UpdateNav();
+
+        string selectName = pendingSelectName;
+        int selectGrid = pendingSelectGrid;
+        pendingSelectName = null;
+        pendingSelectGrid = -1;
         SyncTree(path);
 
         var old = session;
@@ -503,6 +536,13 @@ sealed class MainForm : Form
         OnUiTimer();
         grid.Focus();
 
+        int sel = -1;
+        if (selectName != null)
+            for (int g = 0; g < ns.ItemCount; g++)
+                if (string.Equals(ns.ItemName(g), selectName, StringComparison.OrdinalIgnoreCase)) { sel = g; break; }
+        if (sel < 0 && selectGrid >= 0 && ns.ItemCount > 0) sel = Math.Min(selectGrid, ns.ItemCount - 1);
+        if (sel >= 0) grid.SelectIndex(sel);
+
         if (pendingOpenFile != null)
         {
             string name = pendingOpenFile;
@@ -510,7 +550,7 @@ sealed class MainForm : Form
             int idx = Array.FindIndex(ns.Files, f => string.Equals(f.Name, name, StringComparison.OrdinalIgnoreCase));
             if (idx >= 0)
             {
-                grid.SelectIndex(idx);
+                grid.SelectIndex(ns.GridIndexOfFile(idx));
                 OpenViewer(idx);
             }
         }
@@ -538,7 +578,9 @@ sealed class MainForm : Form
     {
         if (currentPath == null) return;
         var parent = Directory.GetParent(currentPath);
-        if (parent != null) OpenFolder(parent.FullName, true);
+        if (parent == null) return;
+        pendingSelectName = Path.GetFileName(currentPath.TrimEnd('\\', '/'));
+        OpenFolder(parent.FullName, true);
     }
 
     void UpdateNav()
@@ -550,22 +592,51 @@ sealed class MainForm : Form
 
     // ================================================================ viewer & item actions
 
-    void OpenViewer(int index)
+    void OnItemActivated(int g)
+    {
+        var s = session;
+        if (s == null || g < 0 || g >= s.ItemCount) return;
+        if (s.IsFolder(g)) OpenFolder(s.Folders[g].FullPath, true);
+        else OpenViewer(s.FileIndex(g));
+    }
+
+    void OpenViewer(int fileIndex)
     {
         var s = session;
         if (s == null || s.Files.Length == 0) return;
-        using var v = new ViewerForm(s, index, Screen.FromControl(this));
+        using var v = new ViewerForm(s, fileIndex, Screen.FromControl(this));
         v.ShowDialog(this);
-        grid.SelectIndex(v.CurrentIndex);
+
+        if (v.AnyDeleted)
+        {
+            // indices shift after a deletion: reload and select the photo the viewer ended on
+            pendingSelectName = s.Files[v.CurrentIndex].Name;
+            pendingSelectGrid = s.GridIndexOfFile(v.CurrentIndex);
+            Reload();
+            return;
+        }
+        grid.SelectIndex(s.GridIndexOfFile(v.CurrentIndex));
         grid.Focus();
     }
 
-    void OnSelectionChanged(int i)
+    void OnSelectionChanged()
     {
         var s = session;
-        if (s == null || i < 0 || i >= s.Files.Length) { stRight.Text = ""; return; }
-        var f = s.Files[i];
-        stRight.Text = $"{f.Name}   ·   {Fmt.Size(f.Size)}   ·   {Fmt.Date(f.Modified)}";
+        int n = grid.SelectedCount;
+        int i = grid.FocusedIndex;
+        string prefix = n > 1 ? L.F("status.selected", n) + "   ·   " : "";
+        if (s == null || i < 0 || i >= s.ItemCount)
+        {
+            stRight.Text = n > 1 ? L.F("status.selected", n) : "";
+            return;
+        }
+        if (s.IsFolder(i))
+        {
+            stRight.Text = prefix + s.Folders[i].Name;
+            return;
+        }
+        var f = s.Files[s.FileIndex(i)];
+        stRight.Text = prefix + $"{f.Name}   ·   {Fmt.Size(f.Size)}   ·   {Fmt.Date(f.Modified)}";
     }
 
     void ShowItemMenu(int index, Point screenPos)
@@ -574,36 +645,60 @@ sealed class MainForm : Form
         ctx.Show(screenPos);
     }
 
-    string PathOf(int i)
+    List<string> SelectedPaths()
     {
         var s = session;
-        return s != null && i >= 0 && i < s.Files.Length ? s.Files[i].FullPath : null;
+        if (s == null) return new List<string>();
+        return grid.SelectedIndices.Where(g => g >= 0 && g < s.ItemCount).Select(s.ItemPath).ToList();
     }
 
-    void ShowInExplorer(int i)
+    void ShowInExplorer(int g)
     {
-        string p = PathOf(i);
-        if (p == null) return;
+        var s = session;
+        if (s == null || g < 0 || g >= s.ItemCount) return;
+        string p = s.ItemPath(g);
         try { Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{p}\"") { UseShellExecute = true }); } catch { }
     }
 
-    void CopyPath(int i)
+    void CopyPaths()
     {
-        string p = PathOf(i);
-        if (p == null) return;
-        try { Clipboard.SetText(p); } catch { }
+        var paths = SelectedPaths();
+        if (paths.Count == 0) return;
+        try { Clipboard.SetText(string.Join(Environment.NewLine, paths)); } catch { }
     }
 
-    void CopyFile(int i)
+    void CopyFiles()
     {
-        string p = PathOf(i);
-        if (p == null) return;
+        var paths = SelectedPaths();
+        if (paths.Count == 0) return;
         try
         {
-            var sc = new System.Collections.Specialized.StringCollection { p };
+            var sc = new System.Collections.Specialized.StringCollection();
+            sc.AddRange(paths.ToArray());
             Clipboard.SetFileDropList(sc);
         }
         catch { }
+    }
+
+    /// <summary>Del = Recycle Bin, Shift+Del = permanently (Windows asks). Folders in the selection are ignored.</summary>
+    void DeleteSelected(bool permanent)
+    {
+        var s = session;
+        if (s == null) return;
+        var sel = grid.SelectedIndices.Where(g => g >= 0 && g < s.ItemCount && !s.IsFolder(g)).ToList();
+        if (sel.Count == 0) return;
+
+        // keep the cursor where it was: the first item after the deleted block, else the one before it
+        var set = new HashSet<int>(sel);
+        int keep = -1;
+        for (int g = sel[0] + 1; g < s.ItemCount; g++) if (!set.Contains(g)) { keep = g; break; }
+        if (keep < 0) for (int g = sel[0] - 1; g >= 0; g--) if (!set.Contains(g)) { keep = g; break; }
+
+        ShellOps.Delete(this, sel.Select(s.ItemPath).ToList(), permanent);
+
+        pendingSelectName = keep >= 0 ? s.ItemName(keep) : null;
+        pendingSelectGrid = sel[0];
+        Reload();
     }
 
     // ================================================================ settings
@@ -611,7 +706,7 @@ sealed class MainForm : Form
     void ShowSettings()
     {
         cacheCleared = false;
-        using var dlg = new SettingsForm(ClearCacheNow);
+        using var dlg = new SettingsForm(ClearCacheNow, () => UpdateService.CheckAsync());
         var result = dlg.ShowDialog(this);
 
         if (result == DialogResult.OK)
@@ -622,6 +717,63 @@ sealed class MainForm : Form
             Task.Run(() => CacheCleaner.Clean(AppSettings.Current));
         }
         if (cacheCleared) Reload();
+
+        if (dlg.FoundUpdate != null)
+        {
+            ShowUpdateAvailable(dlg.FoundUpdate);
+            ShowUpdateDialog(dlg.FoundUpdate);
+        }
+    }
+
+    // ================================================================ updates
+
+    async Task CheckUpdatesBackgroundAsync(int delayMs)
+    {
+        try
+        {
+            if (delayMs > 0) await Task.Delay(delayMs);
+            if (IsDisposed || !AppSettings.Current.AutoUpdateCheck) return;
+            var info = await UpdateService.CheckAsync();
+            if (IsDisposed || info == null) return;
+            if (string.Equals(info.Tag, AppSettings.Current.SkippedVersion, StringComparison.OrdinalIgnoreCase)) return;
+            ShowUpdateAvailable(info);
+        }
+        catch { }   // offline, GitHub limit etc. - try again later
+    }
+
+    void ShowUpdateAvailable(UpdateInfo info)
+    {
+        pendingUpdate = info;
+        stUpdate.Text = L.F("upd.available", info.VersionText);
+        stUpdate.Visible = true;
+    }
+
+    void ShowUpdateDialog(UpdateInfo info)
+    {
+        if (info == null) return;
+        using var dlg = new UpdateForm(info);
+        var r = dlg.ShowDialog(this);
+
+        if (dlg.SkipRequested)
+        {
+            AppSettings.Current.SkippedVersion = info.Tag;
+            AppSettings.Current.Save();
+            stUpdate.Visible = false;
+            pendingUpdate = null;
+            return;
+        }
+        if (r != DialogResult.OK || dlg.DownloadedFile == null) return;
+
+        try
+        {
+            UpdateService.Install(dlg.DownloadedFile);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, L.F("upd.failed", ex.Message), L.T("upd.title"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        Close();   // Program starts the new version after the window is closed
     }
 
     /// <summary>Releases the cache files held by the open folder so they can be deleted.</summary>
@@ -749,6 +901,10 @@ sealed class MainForm : Form
         }
         OpenFolder(start, false);
         indexer.Start();
+
+        _ = CheckUpdatesBackgroundAsync(8000);
+        updTimer.Tick += (_, _) => _ = CheckUpdatesBackgroundAsync(0);
+        updTimer.Start();
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
@@ -761,6 +917,7 @@ sealed class MainForm : Form
         s.Save();
 
         uiTimer.Stop();
+        updTimer.Stop();
         openCts?.Cancel();
         var sess = session;
         session = null;

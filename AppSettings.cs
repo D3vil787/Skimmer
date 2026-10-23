@@ -22,6 +22,10 @@ sealed class AppSettings
     public bool ShowOverlay { get; set; } = true;   // info bar in full-screen viewer
     public string Language { get; set; } = "auto";  // auto | ru | en
 
+    // Updates
+    public bool AutoUpdateCheck { get; set; } = true;
+    public string SkippedVersion { get; set; } = "";
+
     // Window state
     public string LastFolder { get; set; } = "";
     public int WindowX { get; set; } = int.MinValue;

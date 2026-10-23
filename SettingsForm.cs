@@ -7,6 +7,12 @@ namespace Skimmer;
 sealed class SettingsForm : Form
 {
     readonly Action clearCache;
+    readonly Func<Task<UpdateInfo>> checkUpdates;
+    readonly CheckBox chkUpd = new();
+    Button btnCheck;
+
+    /// <summary>Set when "Check now" found a newer version; the main window then offers it.</summary>
+    public UpdateInfo FoundUpdate;
     readonly CheckBox chkBg = new();
     readonly ListBox lstFolders = new();
     readonly CheckBox chkSub = new();
@@ -16,9 +22,10 @@ sealed class SettingsForm : Form
     readonly ComboBox cmbLang = new();
     readonly Label lblUsed = new();
 
-    public SettingsForm(Action clearCache)
+    public SettingsForm(Action clearCache, Func<Task<UpdateInfo>> checkUpdates)
     {
         this.clearCache = clearCache;
+        this.checkUpdates = checkUpdates;
         var s = AppSettings.Current;
 
         Text = L.T("set.title");
@@ -29,7 +36,7 @@ sealed class SettingsForm : Form
         MinimizeBox = false;
         ShowInTaskbar = false;
         StartPosition = FormStartPosition.CenterParent;
-        ClientSize = new Size(560, 560);
+        ClientSize = new Size(560, 660);
         BackColor = Theme.Back;
         ForeColor = Theme.Text;
         Font = new Font("Segoe UI", 9f);
@@ -110,23 +117,36 @@ sealed class SettingsForm : Form
         gb2.Controls.Add(btnClear);
         Controls.Add(gb2);
 
+        // --- updates ---
+        var gb3 = Group(L.T("set.upd"), 10, 490, 540, 88);
+        chkUpd.Text = L.T("set.upd.auto");
+        chkUpd.AutoSize = true;
+        chkUpd.Location = new Point(14, 24);
+        chkUpd.Checked = s.AutoUpdateCheck;
+        gb3.Controls.Add(chkUpd);
+        gb3.Controls.Add(Lbl(L.F("set.upd.version", UpdateService.CurrentText), 14, 56));
+        btnCheck = Btn(L.T("set.upd.check"), 330, 50, 198);
+        btnCheck.Click += (_, _) => OnCheckNow();
+        gb3.Controls.Add(btnCheck);
+        Controls.Add(gb3);
+
         // --- language ---
-        Controls.Add(Lbl(L.T("set.lang"), 14, 495));
+        Controls.Add(Lbl(L.T("set.lang"), 14, 594));
         cmbLang.DropDownStyle = ComboBoxStyle.DropDownList;
         cmbLang.FlatStyle = FlatStyle.Flat;
         cmbLang.BackColor = Theme.Input;
         cmbLang.ForeColor = Theme.Text;
         cmbLang.Items.AddRange(new object[] { L.T("set.lang.auto"), "Русский", "English" });
         cmbLang.SelectedIndex = s.Language == "ru" ? 1 : s.Language == "en" ? 2 : 0;
-        cmbLang.Location = new Point(330, 491);
+        cmbLang.Location = new Point(330, 590);
         cmbLang.Width = 140;
         Controls.Add(cmbLang);
 
         // --- OK / Cancel ---
-        var ok = Btn(L.T("ok"), 360, 524, 90);
+        var ok = Btn(L.T("ok"), 360, 624, 90);
         ok.DialogResult = DialogResult.OK;
         ok.Click += (_, _) => Apply();
-        var cancel = Btn(L.T("cancel"), 460, 524, 90);
+        var cancel = Btn(L.T("cancel"), 460, 624, 90);
         cancel.DialogResult = DialogResult.Cancel;
         Controls.Add(ok);
         Controls.Add(cancel);
@@ -150,6 +170,35 @@ sealed class SettingsForm : Form
         lstFolders.Items.Add(p);
     }
 
+    async void OnCheckNow()
+    {
+        btnCheck.Enabled = false;
+        try
+        {
+            var info = await checkUpdates();
+            if (IsDisposed) return;
+            if (info == null)
+            {
+                MessageBox.Show(this, L.F("upd.uptodate", UpdateService.CurrentText), Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            else
+            {
+                Apply();
+                FoundUpdate = info;
+                DialogResult = DialogResult.OK;
+            }
+        }
+        catch (Exception ex)
+        {
+            if (!IsDisposed)
+                MessageBox.Show(this, L.F("upd.checkfail", ex.Message), Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            if (!IsDisposed) btnCheck.Enabled = true;
+        }
+    }
+
     void DoClear()
     {
         clearCache?.Invoke();
@@ -162,6 +211,7 @@ sealed class SettingsForm : Form
     {
         var s = AppSettings.Current;
         s.BackgroundIndexing = chkBg.Checked;
+        s.AutoUpdateCheck = chkUpd.Checked;
         s.IndexSubfolders = chkSub.Checked;
         s.RescanMinutes = (int)numRescan.Value;
         s.CacheMaxAgeDays = (int)numAge.Value;

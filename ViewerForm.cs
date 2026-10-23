@@ -9,7 +9,8 @@ namespace Skimmer;
 /// picture (decoded to screen size) replaces it as soon as it is ready, and the neighbours
 /// are pre-decoded in the direction of travel so that paging feels immediate.
 /// Keys: Right/Down/PageDown/Space = next, Left/Up/PageUp/Backspace = previous,
-/// Home/End, Z = 100%, I = info bar, Esc/Enter/double click = close.
+/// Home/End, Z = 100%, I = info bar, Del = to Recycle Bin, Shift+Del = delete permanently,
+/// Esc/Enter/double click = close.
 /// </summary>
 sealed class ViewerForm : Form
 {
@@ -21,6 +22,7 @@ sealed class ViewerForm : Form
     readonly Dictionary<int, LoadedImage> cache = new();
     readonly HashSet<int> loading = new();
     readonly HashSet<int> failed = new();
+    readonly HashSet<int> removed = new();   // deleted while the viewer was open
     readonly SemaphoreSlim gate = new(3);
     readonly Rectangle screen;
 
@@ -42,6 +44,7 @@ sealed class ViewerForm : Form
     volatile bool closing;
 
     public int CurrentIndex => index;
+    public bool AnyDeleted => removed.Count > 0;
 
     public ViewerForm(FolderSession session, int startIndex, Screen onScreen)
     {
@@ -97,7 +100,7 @@ sealed class ViewerForm : Form
     void RequestLoad(int i)
     {
         if (i < 0 || i >= session.Files.Length) return;
-        if (cache.ContainsKey(i) || loading.Contains(i) || failed.Contains(i)) return;
+        if (cache.ContainsKey(i) || loading.Contains(i) || failed.Contains(i) || removed.Contains(i)) return;
         loading.Add(i);
         string path = session.Files[i].FullPath;
         int w = screen.Width, h = screen.Height;
@@ -177,6 +180,38 @@ sealed class ViewerForm : Form
         full?.Bmp.Dispose();
         full = null;
         fullIndex = -1;
+    }
+
+    /// <summary>Next index in the given direction that was not deleted, or -1.</summary>
+    int Step(int from, int dir)
+    {
+        for (int j = from + dir; j >= 0 && j < session.Files.Length; j += dir)
+            if (!removed.Contains(j)) return j;
+        return -1;
+    }
+
+    void Go(int from, int dir)
+    {
+        int j = Step(from, dir);
+        if (j >= 0) ShowImage(j);
+    }
+
+    void DeleteCurrent(bool permanent)
+    {
+        string path = session.Files[index].FullPath;
+        if (!ShellOps.Delete(this, new[] { path }, permanent)) return;
+        if (File.Exists(path)) return;   // cancelled or failed
+
+        removed.Add(index);
+        if (cache.Remove(index, out var li)) li.Bmp.Dispose();
+        DisposePreview();
+        DisposeFull();
+
+        int dir = direction >= 0 ? 1 : -1;
+        int j = Step(index, dir);
+        if (j < 0) j = Step(index, -dir);
+        if (j < 0) { Close(); return; }
+        ShowImage(j);
     }
 
     // ------------------------------------------------------------ zoom 100%
@@ -265,7 +300,9 @@ sealed class ViewerForm : Form
     {
         var f = session.Files[index];
         string dims = ow > 0 ? $"   {ow}×{oh}" : "";
-        string text = $"{index + 1} / {session.Files.Length}   {f.Name}{dims}   {Fmt.Size(f.Size)}   {Fmt.Date(f.Modified)}";
+        int pos = index + 1 - removed.Count(r => r < index);
+        int total = session.Files.Length - removed.Count;
+        string text = $"{pos} / {total}   {f.Name}{dims}   {Fmt.Size(f.Size)}   {Fmt.Date(f.Modified)}";
         if (zoom100) text += "   100%";
 
         using var font = new Font("Segoe UI", 11f);
@@ -284,11 +321,13 @@ sealed class ViewerForm : Form
         switch (keyData)
         {
             case Keys.Right: case Keys.Down: case Keys.PageDown: case Keys.Space:
-                ShowImage(index + 1); return true;
+                Go(index, 1); return true;
             case Keys.Left: case Keys.Up: case Keys.PageUp: case Keys.Back:
-                ShowImage(index - 1); return true;
-            case Keys.Home: ShowImage(0); return true;
-            case Keys.End: ShowImage(session.Files.Length - 1); return true;
+                Go(index, -1); return true;
+            case Keys.Home: Go(-1, 1); return true;
+            case Keys.End: Go(session.Files.Length, -1); return true;
+            case Keys.Delete: DeleteCurrent(false); return true;
+            case Keys.Shift | Keys.Delete: DeleteCurrent(true); return true;
             case Keys.Z: ToggleZoom(); return true;
             case Keys.I:
                 overlay = !overlay;
@@ -304,8 +343,8 @@ sealed class ViewerForm : Form
     protected override void OnMouseWheel(MouseEventArgs e)
     {
         base.OnMouseWheel(e);
-        if (e.Delta > 0) ShowImage(index - 1);
-        else if (e.Delta < 0) ShowImage(index + 1);
+        if (e.Delta > 0) Go(index, -1);
+        else if (e.Delta < 0) Go(index, 1);
     }
 
     protected override void OnMouseDoubleClick(MouseEventArgs e)
