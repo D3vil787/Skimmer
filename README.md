@@ -50,20 +50,14 @@ You can also start it as `Skimmer.exe "D:\Photos"` or `Skimmer.exe "D:\Photos\im
 
 ## Download
 
-Grab the latest build from [**Releases**](../../releases) (or from the *Actions* artifacts of any commit):
-
-| File | Size | Needs |
-|---|---|---|
-| `Skimmer.exe` | ~60 MB | nothing – fully self-contained |
-| `Skimmer-small.exe` | < 1 MB | [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0) |
-
-Windows 10 / 11, x64.
+Grab `Skimmer.exe` from [**Releases**](../../releases) (or from the *Actions* artifacts of any commit).
+It is fully self-contained (~60 MB): nothing to install. Windows 10 / 11, x64.
 
 ## Updates
 
 Skimmer checks `github.com/D3vil787/Skimmer/releases/latest` a few seconds after start and every 6 hours
 (can be turned off in *Settings*, there is also *Check now*). When a newer version exists, a link appears in
-the status bar. *Update and restart* downloads the same variant you run (`Skimmer.exe` or `Skimmer-small.exe`),
+the status bar. *Update and restart* downloads the new `Skimmer.exe`,
 checks it against `SHA256SUMS.txt` from the release, renames the running exe to `*.old`, puts the new one in its
 place and restarts. Settings and cache are kept. If the program folder is read-only, the release page is opened instead.
 
@@ -99,7 +93,7 @@ dotnet publish Skimmer.csproj -c Release -p:PublishSingleFile=true -o out
 The result is `out\Skimmer.exe`.
 
 **Releases** are automatic: every push to `main` is built by GitHub Actions, and when `<Version>` in `Skimmer.csproj`
-has no matching `vX.Y.Z` tag yet, the workflow creates that release with `Skimmer.exe`, `Skimmer-small.exe` and
+has no matching `vX.Y.Z` tag yet, the workflow creates that release with `Skimmer.exe` and
 `SHA256SUMS.txt`. So releasing = bumping the version.
 
 ## License
