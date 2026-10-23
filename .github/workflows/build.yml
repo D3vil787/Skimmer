@@ -19,6 +19,21 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
+      # A release is made automatically when Version in Skimmer.csproj has no tag yet.
+      - name: Detect version
+        id: ver
+        shell: bash
+        run: |
+          VER=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' Skimmer.csproj | head -1 | tr -d '\r')
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ] \
+             && [ -z "$(git ls-remote --tags origin "refs/tags/v$VER")" ]; then
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Version: $VER"
+
       - name: Publish portable exe (self-contained, nothing to install)
         shell: bash
         run: |
@@ -29,7 +44,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p logs
-          dotnet publish Skimmer.csproj -c Release -p:PublishSingleFile=true -p:SelfContained=false -p:RuntimeIdentifier=win-x64 -o out/small 2>&1 | tee logs/small.log
+          dotnet publish Skimmer.csproj -c Release -p:PublishSingleFile=true -p:SelfContained=false -p:RuntimeIdentifier=win-x64 -p:SkimmerVariant=small -o out/small 2>&1 | tee logs/small.log
 
       - name: Collect
         shell: pwsh
@@ -38,6 +53,11 @@ jobs:
           Copy-Item out/portable/Skimmer.exe dist/Skimmer.exe
           Copy-Item out/small/Skimmer.exe dist/Skimmer-small.exe
           Get-ChildItem dist | Format-Table Name, Length
+          $lines = Get-ChildItem dist -File | ForEach-Object {
+            "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
+          }
+          [System.IO.File]::WriteAllText("$PWD/dist/SHA256SUMS.txt", ($lines -join "`n") + "`n")
+          Get-Content dist/SHA256SUMS.txt
 
       - uses: actions/upload-artifact@v4
         with:
@@ -45,9 +65,11 @@ jobs:
           path: dist/*
 
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: steps.ver.outputs.release == 'true' || startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('v{0}', steps.ver.outputs.version) }}
+          target_commitish: ${{ github.sha }}
           files: dist/*
           generate_release_notes: true
 
