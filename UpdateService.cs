@@ -24,7 +24,7 @@ sealed class UpdateInfo
 /// <summary>
 /// Self-update from GitHub Releases (D3vil787/Skimmer).
 ///  1. GET /releases/latest, compare tag with the running version.
-///  2. Download Skimmer.exe (or Skimmer-small.exe for the small build) next to the running exe as *.new,
+///  2. Download Skimmer.exe next to the running exe as *.new,
 ///     verify SHA-256 against the SHA256SUMS.txt asset of the same release.
 ///  3. Rename the running exe to *.old (allowed on Windows), move *.new into place,
 ///     restart after the main window is closed. Leftover *.old files are deleted at next start.
@@ -81,18 +81,8 @@ static class UpdateService
         return true;
     }
 
-    /// <summary>"full" = self-contained Skimmer.exe, "small" = Skimmer-small.exe (needs the .NET runtime).</summary>
-    static string Variant
-    {
-        get
-        {
-            var a = Assembly.GetExecutingAssembly().GetCustomAttributes<AssemblyMetadataAttribute>()
-                .FirstOrDefault(x => x.Key == "Variant");
-            return string.IsNullOrEmpty(a?.Value) ? "full" : a.Value;
-        }
-    }
-
-    static string AssetNameForThisBuild => Variant == "small" ? "Skimmer-small.exe" : "Skimmer.exe";
+    /// <summary>Releases contain one self-contained exe.</summary>
+    const string AssetNameForThisBuild = "Skimmer.exe";
 
     /// <summary>False when the program folder is read-only or the exe is not a normal Skimmer.exe process.</summary>
     public static bool CanSelfUpdate

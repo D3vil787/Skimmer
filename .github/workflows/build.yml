@@ -40,18 +40,11 @@ jobs:
           mkdir -p logs
           dotnet publish Skimmer.csproj -c Release -p:PublishSingleFile=true -o out/portable 2>&1 | tee logs/portable.log
 
-      - name: Publish small exe (needs .NET 8 Desktop Runtime)
-        shell: bash
-        run: |
-          mkdir -p logs
-          dotnet publish Skimmer.csproj -c Release -p:PublishSingleFile=true -p:SelfContained=false -p:RuntimeIdentifier=win-x64 -p:SkimmerVariant=small -o out/small 2>&1 | tee logs/small.log
-
       - name: Collect
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item out/portable/Skimmer.exe dist/Skimmer.exe
-          Copy-Item out/small/Skimmer.exe dist/Skimmer-small.exe
           Get-ChildItem dist | Format-Table Name, Length
           $lines = Get-ChildItem dist -File | ForEach-Object {
             "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
