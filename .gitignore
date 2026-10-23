@@ -1,0 +1,9 @@
+bin/
+obj/
+out/
+dist/
+.vs/
+*.user
+SkimmerCache/
+Skimmer.settings.json
+Skimmer.log
