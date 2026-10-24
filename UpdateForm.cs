@@ -96,7 +96,7 @@ sealed class UpdateForm : Form
             Location = new Point(x, y),
             Size = new Size(w, 30),
             FlatStyle = FlatStyle.Flat,
-            BackColor = Color.FromArgb(60, 60, 60),
+            BackColor = Theme.ButtonBack,
             ForeColor = Theme.Text,
             UseVisualStyleBackColor = false
         };
@@ -137,7 +137,7 @@ sealed class UpdateForm : Form
         {
             if (IsDisposed) return;
             bar.Visible = false;
-            lblStatus.ForeColor = Color.FromArgb(255, 130, 120);
+            lblStatus.ForeColor = Theme.Error;
             lblStatus.Text = L.F("upd.failed", ex.Message);
             btnInstall.Enabled = true;
             btnSkip.Enabled = true;

@@ -197,7 +197,7 @@ sealed class BreadcrumbBar : Control
             bool isHot = p == hot || p == pressed;
             if (isHot)
             {
-                using var b = new SolidBrush(p == pressed ? Color.FromArgb(80, 80, 80) : Color.FromArgb(66, 66, 66));
+                using var b = new SolidBrush(p == pressed ? Theme.Pressed : Theme.Hover);
                 g.FillRectangle(b, p.Rect);
             }
 

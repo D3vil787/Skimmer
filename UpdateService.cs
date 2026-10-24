@@ -241,6 +241,9 @@ static class UpdateService
         PendingRestartPath = exe;
     }
 
+    /// <summary>Restart the same exe after the main window closes (used to apply theme / language).</summary>
+    public static void RequestRestart() => PendingRestartPath = Environment.ProcessPath;
+
     /// <summary>Called by Program after the main window has closed.</summary>
     public static void StartPendingRestart()
     {

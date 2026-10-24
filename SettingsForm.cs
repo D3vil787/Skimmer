@@ -20,6 +20,10 @@ sealed class SettingsForm : Form
     readonly NumericUpDown numAge = new();
     readonly NumericUpDown numSize = new();
     readonly ComboBox cmbLang = new();
+    readonly ComboBox cmbTheme = new();
+
+    /// <summary>Theme or language changed: they are applied by restarting the app.</summary>
+    public bool NeedsRestart;
     readonly Label lblUsed = new();
 
     public SettingsForm(Action clearCache, Func<Task<UpdateInfo>> checkUpdates)
@@ -36,7 +40,7 @@ sealed class SettingsForm : Form
         MinimizeBox = false;
         ShowInTaskbar = false;
         StartPosition = FormStartPosition.CenterParent;
-        ClientSize = new Size(560, 660);
+        ClientSize = new Size(560, 694);
         BackColor = Theme.Back;
         ForeColor = Theme.Text;
         Font = new Font("Segoe UI", 9f);
@@ -130,23 +134,35 @@ sealed class SettingsForm : Form
         gb3.Controls.Add(btnCheck);
         Controls.Add(gb3);
 
+        // --- theme ---
+        Controls.Add(Lbl(L.T("set.theme"), 14, 594));
+        cmbTheme.DropDownStyle = ComboBoxStyle.DropDownList;
+        cmbTheme.FlatStyle = FlatStyle.Flat;
+        cmbTheme.BackColor = Theme.Input;
+        cmbTheme.ForeColor = Theme.Text;
+        cmbTheme.Items.AddRange(new object[] { L.T("theme.dark"), L.T("theme.light"), L.T("theme.system") });
+        cmbTheme.SelectedIndex = s.Theme == "light" ? 1 : s.Theme == "system" ? 2 : 0;
+        cmbTheme.Location = new Point(330, 590);
+        cmbTheme.Width = 180;
+        Controls.Add(cmbTheme);
+
         // --- language ---
-        Controls.Add(Lbl(L.T("set.lang"), 14, 594));
+        Controls.Add(Lbl(L.T("set.lang"), 14, 628));
         cmbLang.DropDownStyle = ComboBoxStyle.DropDownList;
         cmbLang.FlatStyle = FlatStyle.Flat;
         cmbLang.BackColor = Theme.Input;
         cmbLang.ForeColor = Theme.Text;
         cmbLang.Items.AddRange(new object[] { L.T("set.lang.auto"), "Русский", "English" });
         cmbLang.SelectedIndex = s.Language == "ru" ? 1 : s.Language == "en" ? 2 : 0;
-        cmbLang.Location = new Point(330, 590);
-        cmbLang.Width = 140;
+        cmbLang.Location = new Point(330, 624);
+        cmbLang.Width = 180;
         Controls.Add(cmbLang);
 
         // --- OK / Cancel ---
-        var ok = Btn(L.T("ok"), 360, 624, 90);
+        var ok = Btn(L.T("ok"), 360, 658, 90);
         ok.DialogResult = DialogResult.OK;
         ok.Click += (_, _) => Apply();
-        var cancel = Btn(L.T("cancel"), 460, 624, 90);
+        var cancel = Btn(L.T("cancel"), 460, 658, 90);
         cancel.DialogResult = DialogResult.Cancel;
         Controls.Add(ok);
         Controls.Add(cancel);
@@ -216,7 +232,11 @@ sealed class SettingsForm : Form
         s.RescanMinutes = (int)numRescan.Value;
         s.CacheMaxAgeDays = (int)numAge.Value;
         s.CacheMaxSizeMB = (int)numSize.Value;
-        s.Language = cmbLang.SelectedIndex == 1 ? "ru" : cmbLang.SelectedIndex == 2 ? "en" : "auto";
+        string lang = cmbLang.SelectedIndex == 1 ? "ru" : cmbLang.SelectedIndex == 2 ? "en" : "auto";
+        string theme = cmbTheme.SelectedIndex == 1 ? "light" : cmbTheme.SelectedIndex == 2 ? "system" : "dark";
+        NeedsRestart = lang != s.Language || theme != s.Theme;
+        s.Language = lang;
+        s.Theme = theme;
         s.IndexFolders = lstFolders.Items.Cast<string>().ToList();
         s.Save();
     }
@@ -248,7 +268,7 @@ sealed class SettingsForm : Form
             Location = new Point(x, y),
             Size = new Size(w, 28),
             FlatStyle = FlatStyle.Flat,
-            BackColor = Color.FromArgb(60, 60, 60),
+            BackColor = Theme.ButtonBack,
             ForeColor = Theme.Text,
             UseVisualStyleBackColor = false
         };
