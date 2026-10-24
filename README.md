@@ -14,6 +14,7 @@ compact on-disk cache, and the next time you open that folder everything appears
 - **Explorer-style layout** – folder tree + thumbnail grid, clickable breadcrumb address bar (› lists subfolders, click the empty part to type a path), back / forward / up, drag & drop a folder or photo onto the window.
 - **Subfolders as tiles** with a preview of the first photos inside; going *Up* selects the folder you came from.
 - **Explorer-style selection** – Ctrl+click, Shift+click, Shift+arrows, Ctrl+A; `Del` sends to the Recycle Bin, `Shift+Del` deletes permanently (Windows asks). Works in the full-screen viewer too, handy for culling.
+- **Live updates** – new, deleted, renamed or rewritten photos show up by themselves (a file still being copied gets its thumbnail once it is complete); scroll position and selection stay put.
 - **Built for huge folders** – the grid is fully virtual, so 50,000 photos in one folder cost no more than 50.
 - **Instant thumbnails from a persistent cache** – open a folder a second time and all previews are already there.
 - **Background indexing** – while the app is running it can index folders you choose in *Settings* (with subfolders) and re-scan them periodically, so your cameras' / photo archive folders are always ready.

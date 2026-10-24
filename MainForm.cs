@@ -43,6 +43,13 @@ sealed class MainForm : Form
     int pendingSelectGrid = -1; // ...or this grid index if the name is gone
     UpdateInfo pendingUpdate;
     bool splitReady;            // splitter restored; safe to save its position
+
+    // live updates of the open folder
+    FileSystemWatcher watcher;
+    readonly System.Windows.Forms.Timer fsTimer = new() { Interval = 1000 };
+    volatile bool fsDirty;
+    bool refreshing;
+    bool viewerOpen;
     bool userDragsSplitter;     // set by SplitterMoving, which fires only for a user drag
     int treeWidth96 = -1;       // tree width the user chose, in 96-dpi units
     int ctxIndex = -1;
@@ -75,6 +82,7 @@ sealed class MainForm : Form
         DragDrop += OnDropFiles;
 
         uiTimer.Tick += (_, _) => OnUiTimer();
+        fsTimer.Tick += (_, _) => OnFsTimer();
         uiTimer.Start();
     }
 
@@ -536,6 +544,7 @@ sealed class MainForm : Form
         session = ns;
         ns.Start();
         grid.SetSession(ns);
+        Watch(ns.Path);
         stLeft.Text = L.F("status.files", ns.Files.Length, Fmt.Size(ns.Files.Sum(f => f.Size)));
         OnUiTimer();
         grid.Focus();
@@ -609,18 +618,21 @@ sealed class MainForm : Form
         var s = session;
         if (s == null || s.Files.Length == 0) return;
         using var v = new ViewerForm(s, fileIndex, Screen.FromControl(this));
-        v.ShowDialog(this);
+        viewerOpen = true;
+        try { v.ShowDialog(this); }
+        finally { viewerOpen = false; }
 
-        if (v.AnyDeleted)
-        {
-            // indices shift after a deletion: reload and select the photo the viewer ended on
-            pendingSelectName = s.Files[v.CurrentIndex].Name;
-            pendingSelectGrid = s.GridIndexOfFile(v.CurrentIndex);
-            Reload();
-            return;
-        }
         grid.SelectIndex(s.GridIndexOfFile(v.CurrentIndex));
         grid.Focus();
+        if (v.AnyDeleted)
+        {
+            // indices shift after a deletion: re-read the folder, keep the photo the viewer ended on
+            _ = SoftRefreshAsync(s.Files[v.CurrentIndex].Name);
+        }
+        else if (fsDirty)
+        {
+            fsTimer.Start();   // changes that arrived while the viewer was open
+        }
     }
 
     void OnSelectionChanged()
@@ -699,10 +711,108 @@ sealed class MainForm : Form
         if (keep < 0) for (int g = sel[0] - 1; g >= 0; g--) if (!set.Contains(g)) { keep = g; break; }
 
         ShellOps.Delete(this, sel.Select(s.ItemPath).ToList(), permanent);
+        _ = SoftRefreshAsync(keep >= 0 ? s.ItemName(keep) : null);
+    }
 
-        pendingSelectName = keep >= 0 ? s.ItemName(keep) : null;
-        pendingSelectGrid = sel[0];
-        Reload();
+    // ================================================================ live folder updates
+
+    void Watch(string path)
+    {
+        watcher?.Dispose();
+        watcher = null;
+        fsDirty = false;
+        fsTimer.Stop();
+        try
+        {
+            var w = new FileSystemWatcher(path)
+            {
+                IncludeSubdirectories = false,
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite | NotifyFilters.Size,
+                InternalBufferSize = 64 * 1024
+            };
+            w.Created += (_, e) => OnFsEvent(e.FullPath, false);
+            w.Deleted += (_, e) => OnFsEvent(e.FullPath, false);
+            w.Changed += (_, e) => OnFsEvent(e.FullPath, true);
+            w.Renamed += (_, e) => { OnFsEvent(e.OldFullPath, false); OnFsEvent(e.FullPath, false); };
+            w.Error += (_, _) => OnFsEvent(null, false);   // buffer overflow etc.: just re-read
+            w.EnableRaisingEvents = true;
+            watcher = w;
+        }
+        catch { }   // some network shares do not support change notifications
+    }
+
+    /// <summary>Called on a thread-pool thread.</summary>
+    void OnFsEvent(string fullPath, bool isChange)
+    {
+        if (fullPath != null)
+        {
+            string name = Path.GetFileName(fullPath);
+            bool image = ImageLoader.IsImage(name);
+            // content changes of subfolders do not affect this view; created/deleted/renamed folders do
+            if (!image && (isChange || File.Exists(fullPath))) return;
+        }
+        fsDirty = true;
+        try
+        {
+            BeginInvoke(new Action(() =>
+            {
+                if (!fsTimer.Enabled) fsTimer.Start();   // batch: one refresh per interval, not one per file
+            }));
+        }
+        catch { }
+    }
+
+    void OnFsTimer()
+    {
+        fsTimer.Stop();
+        if (!fsDirty) return;
+        if (viewerOpen || session == null) return;   // applied after the viewer closes / on the next open
+        if (refreshing) { fsTimer.Start(); return; }
+        _ = SoftRefreshAsync(null);
+    }
+
+    /// <summary>Re-reads the open folder in the background and swaps it in without losing scroll / selection.</summary>
+    async Task SoftRefreshAsync(string focusName)
+    {
+        var old = session;
+        if (old == null) return;
+        if (refreshing) { fsDirty = true; fsTimer.Start(); return; }
+
+        refreshing = true;
+        fsDirty = false;
+        int ticket = openTicket;
+        var st = AppSettings.Current;
+        int mode = st.SortMode;
+        bool desc = st.SortDescending;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        FolderSession ns = null;
+        try
+        {
+            ns = await Task.Run(() => FolderSession.Open(old.Path, mode, desc, CancellationToken.None));
+        }
+        catch { }
+        finally { refreshing = false; }
+        if (ns == null) return;
+
+        // the user navigated away, the viewer opened meanwhile, or the window is closing
+        if (ticket != openTicket || session != old || IsDisposed || viewerOpen)
+        {
+            ns.Dispose();
+            if (viewerOpen && session == old) fsDirty = true;
+            return;
+        }
+
+        session = ns;
+        ns.Start();
+        grid.SwapSession(ns, focusName);
+        old.Dispose();
+        stLeft.Text = L.F("status.files", ns.Files.Length, Fmt.Size(ns.Files.Sum(f => f.Size)));
+        OnUiTimer();
+
+        // big folders take longer to list: refresh them less often
+        fsTimer.Interval = (int)Math.Clamp(sw.ElapsedMilliseconds * 3, 1000, 15000);
+        if (fsDirty) fsTimer.Start();
     }
 
     // ================================================================ settings
@@ -933,6 +1043,9 @@ sealed class MainForm : Form
 
         uiTimer.Stop();
         updTimer.Stop();
+        fsTimer.Stop();
+        watcher?.Dispose();
+        watcher = null;
         openCts?.Cancel();
         var sess = session;
         session = null;
