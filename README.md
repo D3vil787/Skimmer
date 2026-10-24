@@ -20,10 +20,10 @@ compact on-disk cache, and the next time you open that folder everything appears
 - **Background indexing** – while the app is running it can index folders you choose in *Settings* (with subfolders) and re-scan them periodically, so your cameras' / photo archive folders are always ready.
 - **Full-screen viewer** – double-click or `Enter`. Neighbouring photos are pre-decoded, a cached thumbnail is shown immediately, so paging with the arrow keys feels instant.
 - **EXIF orientation**, natural sorting (`img2` before `img10`), sort by name / date / size.
-- **Portable** – settings (`Skimmer.settings.json`) and cache (`SkimmerCache\`) live next to `Skimmer.exe`. If that folder is read-only, `%LOCALAPPDATA%\Skimmer` is used.
+- **Portable** – settings (`Skimmer.settings.json`, `theme-settings.json`, `update-state.json`) and cache (`SkimmerCache\`) live next to `Skimmer.exe`. If that folder is read-only, `%LOCALAPPDATA%\Skimmer` is used.
 - **Self-cleaning cache** – cache of folders you have not opened for N days (default 30) is deleted automatically, plus a total size cap (default 4 GB).
-- **Self-update from GitHub Releases** – a link appears in the status bar when a new version is out; the new exe is downloaded, verified by SHA-256 and swapped in place.
-- Dark / light theme (or follow Windows), Russian and English UI (follows Windows language, can be forced in Settings).
+- **Self-update from GitHub Releases** – a banner under the toolbar announces a new version (checked at start and once a day); the new exe is downloaded, verified by SHA-256 and swapped in place.
+- Look and feel follow the [UiKit brand book](https://github.com/D3vil787/UiKit): light (Fluent Light), dark (Graphite Dark) or *Same as Windows*, switched on the fly; six accent colours; list density; Russian and English UI.
 
 Supported formats: JPEG, PNG, BMP, GIF, TIFF, ICO, JPEG XR and – if the corresponding Windows codecs are installed – WebP and HEIC.
 
@@ -34,7 +34,7 @@ Supported formats: JPEG, PNG, BMP, GIF, TIFF, ICO, JPEG XR and – if the corres
 | Grid | arrows, `PgUp`/`PgDn`, `Home`/`End` | move selection |
 | Grid | `Enter`, double click | open photo / open folder |
 | Grid | Ctrl+click, Shift+click, `Shift`+arrows, `Ctrl+A` | multiple selection |
-| Grid | `Del` / `Shift+Del` | to Recycle Bin / delete permanently |
+| Grid | `Del` / `Shift+Del` | to Recycle Bin / delete permanently (asks, "No" by default) |
 | Grid | right click | open / show in Explorer / copy path / copy file |
 | Anywhere | `F5` | refresh folder |
 | Anywhere | `Alt+←` / `Alt+→` / `Alt+↑` | back / forward / up |
@@ -56,9 +56,10 @@ It is fully self-contained (~60 MB): nothing to install. Windows 10 / 11, x64.
 
 ## Updates
 
-Skimmer checks `github.com/D3vil787/Skimmer/releases/latest` a few seconds after start and every 6 hours
-(can be turned off in *Settings*, there is also *Check now*). When a newer version exists, a link appears in
-the status bar. *Update and restart* downloads the new `Skimmer.exe`,
+Skimmer checks `github.com/D3vil787/Skimmer/releases/latest` a few seconds after start and then once a day
+(can be turned off in *Settings*, there is also *Check now*). When a newer version exists, an accent banner appears
+under the toolbar (*What's new*, *Update*, *Later*, ×) and a link in the status bar; *Later* and × hide the banner
+for that version. Without internet access nothing is shown. *Update and restart* downloads the new `Skimmer.exe`,
 checks it against `SHA256SUMS.txt` from the release, renames the running exe to `*.old`, puts the new one in its
 place and restarts. Settings and cache are kept. If the program folder is read-only, the release page is opened instead.
 
