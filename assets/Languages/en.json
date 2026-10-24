@@ -105,5 +105,6 @@
   "banner.close": "Hide until the next version",
   "lang.ru": "Русский",
   "lang.en": "English",
-  "err.unknown": "Unknown error"
+  "err.unknown": "Unknown error",
+  "del.confirm": "Permanently delete the selected files ({0})? This cannot be undone."
 }
