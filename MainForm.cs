@@ -5,7 +5,7 @@ using System.Windows.Forms;
 
 namespace Skimmer;
 
-sealed class MainForm : Form
+sealed class MainForm : Form, IThemeAware
 {
     const string DummyTag = "\0dummy";
 
@@ -18,13 +18,15 @@ sealed class MainForm : Form
     readonly TrackBar trk = new();
     readonly CheckBox chkNames = new();
     readonly StatusStrip status = new();
-    readonly ToolStripStatusLabel stLeft = new();
-    readonly ToolStripStatusLabel stMid = new();
-    readonly ToolStripStatusLabel stRight = new();
-    readonly ToolStripStatusLabel stUpdate = new();
+    readonly ToolStripStatusLabel stState = new();   // indexing / loading / errors
+    readonly ToolStripStatusLabel stInfo = new();    // selected item
+    readonly ToolStripStatusLabel stCount = new();   // files and size
+    readonly ToolStripStatusLabel stUpdate = new();  // update zone (right)
+    readonly UpdateBanner banner = new();
+    readonly SystemThemeWatcher systemTheme = new();
     readonly ContextMenuStrip ctx = new();
     readonly System.Windows.Forms.Timer uiTimer = new() { Interval = 400 };
-    readonly System.Windows.Forms.Timer updTimer = new() { Interval = 6 * 60 * 60 * 1000 };
+    readonly System.Windows.Forms.Timer updTimer = new() { Interval = 60 * 60 * 1000 };   // hourly tick, checks once a day
     readonly BackgroundIndexer indexer;
     readonly string startArg;
     readonly string startupLastFolder;   // read before any UI event can overwrite it
@@ -42,6 +44,7 @@ sealed class MainForm : Form
     string pendingSelectName;   // select this item after the next folder load
     int pendingSelectGrid = -1; // ...or this grid index if the name is gone
     UpdateInfo pendingUpdate;
+    bool stateFromTimer;        // the state zone currently shows indexing progress
     bool splitReady;            // splitter restored; safe to save its position
 
     // live updates of the open folder
@@ -62,12 +65,10 @@ sealed class MainForm : Form
         var s = AppSettings.Current;
         startupLastFolder = s.LastFolder;
 
-        Text = L.T("app.title");
+        Text = Lang.Get("app.title");
         AutoScaleMode = AutoScaleMode.Dpi;
         AutoScaleDimensions = new SizeF(96f, 96f);
-        BackColor = Theme.Back;
-        ForeColor = Theme.Text;
-        Font = new Font("Segoe UI", 9f);
+        Font = UiTheme.Default;
         MinimumSize = new Size(640, 420);
         AllowDrop = true;
         KeyPreview = false;
@@ -84,6 +85,13 @@ sealed class MainForm : Form
         uiTimer.Tick += (_, _) => OnUiTimer();
         fsTimer.Tick += (_, _) => OnFsTimer();
         uiTimer.Start();
+
+        // Brand book: one theme system for every window, switched on the fly.
+        UiStyle.Attach(this);
+        systemTheme.Changed += (_, _) =>
+        {
+            try { BeginInvoke(new Action(() => ThemeService.SetSystemTheme(systemTheme.IsLight))); } catch { }
+        };
     }
 
     // ================================================================ UI construction
@@ -109,14 +117,13 @@ sealed class MainForm : Form
 
     void BuildUi(AppSettings s)
     {
-        // ---- top bar
-        var bar = new Panel { Dock = DockStyle.Top, Height = 42, BackColor = Theme.Bar };
+        // ---- toolbar: 42 px, icon buttons 36 x 30 (brand book: "Панель инструментов")
+        var bar = UiStyle.Role(new Panel { Dock = DockStyle.Top, Height = 42 }, UiRole.Toolbar);
         var tl = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             ColumnCount = 3,
             RowCount = 1,
-            BackColor = Theme.Bar,
             Margin = Padding.Empty
         };
         tl.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -124,15 +131,15 @@ sealed class MainForm : Form
         tl.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         tl.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
-        var left = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = Padding.Empty, Dock = DockStyle.Fill, BackColor = Theme.Bar };
-        btnBack = Theme.FlatButton("◀", L.T("tip.back"), tips, (_, _) => GoBack());
-        btnFwd = Theme.FlatButton("▶", L.T("tip.forward"), tips, (_, _) => GoForward());
-        btnUp = Theme.FlatButton("▲", L.T("tip.up"), tips, (_, _) => GoUp());
-        btnRefresh = Theme.FlatButton("⟳", L.T("tip.refresh"), tips, (_, _) => Reload());
+        var left = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = Padding.Empty, Dock = DockStyle.Fill };
+        btnBack = UiStyle.IconButton("◀", Lang.Get("tip.back"), tips, (_, _) => GoBack());
+        btnFwd = UiStyle.IconButton("▶", Lang.Get("tip.forward"), tips, (_, _) => GoForward());
+        btnUp = UiStyle.IconButton("▲", Lang.Get("tip.up"), tips, (_, _) => GoUp());
+        btnRefresh = UiStyle.IconButton("⟳", Lang.Get("tip.refresh"), tips, (_, _) => Reload());
         left.Controls.AddRange(new Control[] { btnBack, btnFwd, btnUp, btnRefresh });
 
         addr.Dock = DockStyle.Fill;
-        addr.Margin = new Padding(8, 7, 8, 7);
+        addr.Margin = new Padding(8, 6, 8, 6);
         addr.Navigate += p =>
         {
             OpenFolder(p, true);
@@ -140,14 +147,12 @@ sealed class MainForm : Form
         };
         addr.EditFinished += () => grid.Focus();
 
-        var right = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = Padding.Empty, Dock = DockStyle.Fill, BackColor = Theme.Bar };
+        var right = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = Padding.Empty, Dock = DockStyle.Fill };
         cmbSort.DropDownStyle = ComboBoxStyle.DropDownList;
         cmbSort.FlatStyle = FlatStyle.Flat;
-        cmbSort.BackColor = Theme.Input;
-        cmbSort.ForeColor = Theme.Text;
-        cmbSort.Width = 110;
+        cmbSort.Width = 130;
         cmbSort.Margin = new Padding(4, 8, 2, 0);
-        cmbSort.Items.AddRange(new object[] { L.T("sort.name"), L.T("sort.date"), L.T("sort.size") });
+        cmbSort.Items.AddRange(new object[] { Lang.Get("sort.name"), Lang.Get("sort.date"), Lang.Get("sort.size") });
         cmbSort.SelectedIndex = Math.Clamp(s.SortMode, 0, 2);
         cmbSort.SelectedIndexChanged += (_, _) =>
         {
@@ -155,14 +160,13 @@ sealed class MainForm : Form
             Reload();
         };
 
-        btnDesc = Theme.FlatButton(s.SortDescending ? "▼" : "▲", L.T("tip.desc"), tips, (_, _) =>
+        btnDesc = UiStyle.IconButton(s.SortDescending ? "▼" : "▲", Lang.Get("tip.desc"), tips, (_, _) =>
         {
             var st = AppSettings.Current;
             st.SortDescending = !st.SortDescending;
             btnDesc.Text = st.SortDescending ? "▼" : "▲";
             Reload();
-        }, 32);
-        btnDesc.Font = new Font("Segoe UI Symbol", 9f);
+        });
 
         trk.AutoSize = false;
         trk.Width = 120;
@@ -174,18 +178,16 @@ sealed class MainForm : Form
         trk.SmallChange = 16;
         trk.LargeChange = 32;
         trk.Value = Math.Clamp(s.TileSize, 96, 256);
-        trk.BackColor = Theme.Bar;
-        tips.SetToolTip(trk, L.T("tip.size"));
+        tips.SetToolTip(trk, Lang.Get("tip.size"));
         trk.ValueChanged += (_, _) =>
         {
             grid.TileSize = trk.Value;
             AppSettings.Current.TileSize = trk.Value;
         };
 
-        chkNames.Text = L.T("chk.names");
+        chkNames.Text = Lang.Get("chk.names");
         chkNames.AutoSize = true;
         chkNames.Margin = new Padding(6, 12, 6, 0);
-        chkNames.ForeColor = Theme.Text;
         chkNames.Checked = s.ShowNames;
         chkNames.CheckedChanged += (_, _) =>
         {
@@ -193,7 +195,7 @@ sealed class MainForm : Form
             AppSettings.Current.ShowNames = chkNames.Checked;
         };
 
-        btnSettings = Theme.FlatButton("⚙", L.T("tip.settings"), tips, (_, _) => ShowSettings());
+        btnSettings = UiStyle.IconButton("⚙", Lang.Get("tip.settings"), tips, (_, _) => ShowSettings());
         right.Controls.AddRange(new Control[] { cmbSort, btnDesc, trk, chkNames, btnSettings });
 
         tl.Controls.Add(left, 0, 0);
@@ -201,37 +203,37 @@ sealed class MainForm : Form
         tl.Controls.Add(right, 2, 0);
         bar.Controls.Add(tl);
 
-        // ---- status strip
-        status.Renderer = new DarkRenderer();
-        status.BackColor = Theme.Bar;
-        status.ForeColor = Theme.Text;
-        status.SizingGrip = false;
-        foreach (var l in new[] { stLeft, stMid, stRight })
+        // ---- update banner (brand book: accent strip right under the toolbar)
+        banner.UpdateClicked += () => ShowUpdateDialog(banner.Info);
+        banner.WhatsNewClicked += () => OpenUrl(banner.Info?.PageUrl);
+        banner.Dismissed += () =>
         {
-            l.ForeColor = Theme.Text;
+            if (banner.Info != null)
+            {
+                UpdateState.Current.DismissedVersion = banner.Info.Tag;
+                UpdateState.Current.Save();
+            }
+            banner.HideBanner();
+        };
+
+        // ---- status strip: state, explanation, counter, update zone on the right
+        status.SizingGrip = false;
+        foreach (var l in new[] { stState, stInfo, stCount })
             l.TextAlign = ContentAlignment.MiddleLeft;
-        }
-        stMid.Spring = true;
+        stInfo.Spring = true;
         stUpdate.IsLink = true;
         stUpdate.LinkBehavior = LinkBehavior.HoverUnderline;
-        stUpdate.LinkColor = Theme.Link;
-        stUpdate.ActiveLinkColor = Theme.LinkActive;
-        stUpdate.VisitedLinkColor = Theme.Link;
         stUpdate.Visible = false;
         stUpdate.Click += (_, _) => ShowUpdateDialog(pendingUpdate);
-        status.Items.AddRange(new ToolStripItem[] { stLeft, stMid, stUpdate, stRight });
+        status.Items.AddRange(new ToolStripItem[] { stState, stInfo, stCount, stUpdate });
 
         // ---- tree
         tree.Dock = DockStyle.Fill;
-        tree.BackColor = Theme.Back;
-        tree.ForeColor = Theme.Text;
         tree.BorderStyle = BorderStyle.None;
         tree.HideSelection = false;
         tree.ShowLines = false;
         tree.FullRowSelect = true;
-        tree.ItemHeight = 22;
         tree.HotTracking = true;
-        tree.ImageList = MakeIcons();
         tree.AllowDrop = true;
         tree.DragEnter += OnDragEnterFiles;
         tree.DragDrop += OnDropFiles;
@@ -244,7 +246,6 @@ sealed class MainForm : Form
             if (e.Action != TreeViewAction.ByMouse && e.Action != TreeViewAction.ByKeyboard) return;
             if (e.Node.Tag is string p && p != DummyTag && Directory.Exists(p)) OpenFolder(p, true);
         };
-        tree.HandleCreated += (_, _) => Theme.DarkControl(tree);
 
         // ---- grid
         grid.Dock = DockStyle.Fill;
@@ -261,11 +262,8 @@ sealed class MainForm : Form
         // ---- split
         split.Dock = DockStyle.Fill;
         split.Orientation = Orientation.Vertical;
-        split.BackColor = Theme.Border;
         split.FixedPanel = FixedPanel.Panel1;
         split.SplitterWidth = 3;
-        split.Panel1.BackColor = Theme.Back;
-        split.Panel2.BackColor = Theme.GridBack;
         split.Panel1.Controls.Add(tree);
         split.Panel2.Controls.Add(grid);
 
@@ -279,18 +277,41 @@ sealed class MainForm : Form
             treeWidth96 = Math.Max(60, (int)Math.Round(split.SplitterDistance * 96f / DeviceDpi));
         };
 
-        // docking order: fill first, then bottom, then top
+        // docking order: fill first, then bottom, then the banner, then the toolbar on top
         Controls.Add(split);
         Controls.Add(status);
+        Controls.Add(banner);
         Controls.Add(bar);
 
         BuildContextMenu();
+        tree.ImageList = MakeIcons();
         BuildTree();
         ActiveControl = grid;
     }
 
+    /// <summary>Colours that the generic theme pass does not know about (IThemeAware, called after every theme change).</summary>
+    public void ApplyTheme()
+    {
+        var p = ThemeService.Palette;
+        split.BackColor = p.Border;
+        split.Panel1.BackColor = p.SidebarBack;
+        split.Panel2.BackColor = p.PanelBack;
+
+        tree.Font = UiTheme.Chrome;
+        tree.BackColor = p.SidebarBack;
+        tree.ForeColor = p.Fore;
+        tree.ItemHeight = (int)Math.Round(ThemeService.Density.RowHeight() * DeviceDpi / 96f);
+        var oldIcons = tree.ImageList;
+        tree.ImageList = MakeIcons();
+        oldIcons?.Dispose();
+
+        ThemeService.Apply(ctx);
+    }
+
+    /// <summary>Tree icons in the palette colours (folder, drive, indexed-folders star).</summary>
     static ImageList MakeIcons()
     {
+        var p = ThemeService.Palette;
         var il = new ImageList { ColorDepth = ColorDepth.Depth32Bit, ImageSize = new Size(16, 16) };
 
         Bitmap Draw(Action<Graphics> paint)
@@ -304,22 +325,22 @@ sealed class MainForm : Form
 
         il.Images.Add("folder", Draw(g =>
         {
-            using var tab = new SolidBrush(Color.FromArgb(205, 160, 45));
-            using var body = new SolidBrush(Color.FromArgb(245, 205, 85));
+            using var tab = new SolidBrush(ThemeDraw.Blend(p.FolderIcon, p.Fore, 0.25f));
+            using var body = new SolidBrush(p.FolderIcon);
             g.FillRectangle(tab, 1, 3, 6, 4);
             g.FillRectangle(body, 1, 5, 14, 9);
         }));
         il.Images.Add("drive", Draw(g =>
         {
-            using var body = new SolidBrush(Color.FromArgb(170, 175, 185));
-            using var led = new SolidBrush(Color.FromArgb(80, 200, 100));
+            using var body = new SolidBrush(p.Muted);
+            using var led = new SolidBrush(UiTheme.Success);
             g.FillRectangle(body, 1, 6, 14, 7);
             g.FillRectangle(led, 11, 10, 2, 2);
         }));
         il.Images.Add("star", Draw(g =>
         {
             using var f = new Font("Segoe UI Symbol", 10f);
-            using var br = new SolidBrush(Color.FromArgb(255, 200, 60));
+            using var br = new SolidBrush(p.Accent);
             g.DrawString("★", f, br, -1, 0);
         }));
         return il;
@@ -327,21 +348,17 @@ sealed class MainForm : Form
 
     void BuildContextMenu()
     {
-        ctx.Renderer = new DarkRenderer();
-        ctx.BackColor = Theme.Bar;
-        ctx.ForeColor = Theme.Text;
-
-        var open = new ToolStripMenuItem(L.T("ctx.open")) { ForeColor = Theme.Text };
+        var open = new ToolStripMenuItem(Lang.Get("ctx.open"));
         open.Click += (_, _) => { if (ctxIndex >= 0) OnItemActivated(ctxIndex); };
-        var explorer = new ToolStripMenuItem(L.T("ctx.explorer")) { ForeColor = Theme.Text };
+        var explorer = new ToolStripMenuItem(Lang.Get("ctx.explorer"));
         explorer.Click += (_, _) => ShowInExplorer(ctxIndex);
-        var copyPath = new ToolStripMenuItem(L.T("ctx.copypath")) { ForeColor = Theme.Text };
+        var copyPath = new ToolStripMenuItem(Lang.Get("ctx.copypath"));
         copyPath.Click += (_, _) => CopyPaths();
-        var copyFile = new ToolStripMenuItem(L.T("ctx.copyfile")) { ForeColor = Theme.Text };
+        var copyFile = new ToolStripMenuItem(Lang.Get("ctx.copyfile"));
         copyFile.Click += (_, _) => CopyFiles();
-        var delete = new ToolStripMenuItem(L.T("ctx.delete")) { ForeColor = Theme.Text, ShortcutKeyDisplayString = "Del" };
+        var delete = new ToolStripMenuItem(Lang.Get("ctx.delete")) { ShortcutKeyDisplayString = "Del" };
         delete.Click += (_, _) => DeleteSelected(false);
-        var refresh = new ToolStripMenuItem(L.T("ctx.refresh")) { ForeColor = Theme.Text, ShortcutKeyDisplayString = "F5" };
+        var refresh = new ToolStripMenuItem(Lang.Get("ctx.refresh")) { ShortcutKeyDisplayString = "F5" };
         refresh.Click += (_, _) => Reload();
 
         ctx.Items.AddRange(new ToolStripItem[]
@@ -354,6 +371,19 @@ sealed class MainForm : Form
             var s = session;
             delete.Enabled = s != null && grid.SelectedIndices.Any(g => !s.IsFolder(g));
         };
+        ThemeService.Apply(ctx);
+    }
+
+    void SetState(string text)
+    {
+        stState.Text = text;
+        stateFromTimer = false;
+    }
+
+    static void OpenUrl(string url)
+    {
+        if (string.IsNullOrEmpty(url)) return;
+        try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); } catch { }
     }
 
     // ================================================================ folder tree
@@ -366,7 +396,7 @@ sealed class MainForm : Form
 
         if (s.IndexFolders.Count > 0)
         {
-            var fav = new TreeNode(L.T("tree.indexed")) { ImageKey = "star", SelectedImageKey = "star" };
+            var fav = new TreeNode(Lang.Get("tree.indexed")) { ImageKey = "star", SelectedImageKey = "star" };
             foreach (var f in s.IndexFolders)
                 if (Directory.Exists(f)) fav.Nodes.Add(MakeFolderNode(f, f));
             if (fav.Nodes.Count > 0) { tree.Nodes.Add(fav); fav.Expand(); }
@@ -376,14 +406,14 @@ sealed class MainForm : Form
         AddSpecial(Environment.SpecialFolder.MyPictures, "tree.pictures");
         AddSpecial(Environment.SpecialFolder.MyDocuments, "tree.documents");
         string downloads = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
-        if (Directory.Exists(downloads)) tree.Nodes.Add(MakeFolderNode(downloads, L.T("tree.downloads")));
+        if (Directory.Exists(downloads)) tree.Nodes.Add(MakeFolderNode(downloads, Lang.Get("tree.downloads")));
 
         foreach (var d in DriveInfo.GetDrives())
         {
             string label = "";
             try
             {
-                if (d.DriveType == DriveType.Network) label = L.T("tree.network");
+                if (d.DriveType == DriveType.Network) label = Lang.Get("tree.network");
                 else if (d.IsReady) label = d.VolumeLabel;
             }
             catch { }
@@ -404,7 +434,7 @@ sealed class MainForm : Form
     void AddSpecial(Environment.SpecialFolder sf, string key)
     {
         string p = Environment.GetFolderPath(sf);
-        if (!string.IsNullOrEmpty(p) && Directory.Exists(p)) tree.Nodes.Add(MakeFolderNode(p, L.T(key)));
+        if (!string.IsNullOrEmpty(p) && Directory.Exists(p)) tree.Nodes.Add(MakeFolderNode(p, Lang.Get(key)));
     }
 
     static TreeNode MakeFolderNode(string path, string text = null)
@@ -482,7 +512,7 @@ sealed class MainForm : Form
 
         if (!Directory.Exists(path))
         {
-            stLeft.Text = L.T("err.nofolder");
+            SetState(Lang.Get("err.nofolder"));
             return;
         }
 
@@ -515,9 +545,9 @@ sealed class MainForm : Form
         openCts = new CancellationTokenSource();
         var ct = openCts.Token;
         int ticket = ++openTicket;
-        stLeft.Text = L.T("status.loading");
-        stMid.Text = "";
-        stRight.Text = "";
+        SetState(Lang.Get("status.loading"));
+        stInfo.Text = "";
+        stCount.Text = "";
 
         var st = AppSettings.Current;
         int mode = st.SortMode;
@@ -531,7 +561,7 @@ sealed class MainForm : Form
         catch (OperationCanceledException) { return; }
         catch (Exception ex)
         {
-            if (ticket == openTicket) stLeft.Text = L.F("status.error", ex.Message);
+            if (ticket == openTicket) SetState(Lang.Format("status.error", ex.Message));
             return;
         }
 
@@ -545,7 +575,8 @@ sealed class MainForm : Form
         ns.Start();
         grid.SetSession(ns);
         Watch(ns.Path);
-        stLeft.Text = L.F("status.files", ns.Files.Length, Fmt.Size(ns.Files.Sum(f => f.Size)));
+        SetState("");
+        stCount.Text = Lang.Format("status.files", ns.Files.Length, Fmt.Size(ns.Files.Sum(f => f.Size)));
         OnUiTimer();
         grid.Focus();
 
@@ -640,19 +671,19 @@ sealed class MainForm : Form
         var s = session;
         int n = grid.SelectedCount;
         int i = grid.FocusedIndex;
-        string prefix = n > 1 ? L.F("status.selected", n) + "   ·   " : "";
+        string prefix = n > 1 ? Lang.Format("status.selected", n) + "   ·   " : "";
         if (s == null || i < 0 || i >= s.ItemCount)
         {
-            stRight.Text = n > 1 ? L.F("status.selected", n) : "";
+            stInfo.Text = n > 1 ? Lang.Format("status.selected", n) : "";
             return;
         }
         if (s.IsFolder(i))
         {
-            stRight.Text = prefix + s.Folders[i].Name;
+            stInfo.Text = prefix + s.Folders[i].Name;
             return;
         }
         var f = s.Files[s.FileIndex(i)];
-        stRight.Text = prefix + $"{f.Name}   ·   {Fmt.Size(f.Size)}   ·   {Fmt.Date(f.Modified)}";
+        stInfo.Text = prefix + $"{f.Name}   ·   {Fmt.Size(f.Size)}   ·   {Fmt.Date(f.Modified)}";
     }
 
     void ShowItemMenu(int index, Point screenPos)
@@ -807,7 +838,7 @@ sealed class MainForm : Form
         ns.Start();
         grid.SwapSession(ns, focusName);
         old.Dispose();
-        stLeft.Text = L.F("status.files", ns.Files.Length, Fmt.Size(ns.Files.Sum(f => f.Size)));
+        stCount.Text = Lang.Format("status.files", ns.Files.Length, Fmt.Size(ns.Files.Sum(f => f.Size)));
         OnUiTimer();
 
         // big folders take longer to list: refresh them less often
@@ -832,42 +863,44 @@ sealed class MainForm : Form
         }
         if (cacheCleared) Reload();
 
-        if (result == DialogResult.OK && dlg.NeedsRestart &&
-            MessageBox.Show(this, L.T("set.restart"), L.T("app.title"), MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
-        {
-            UpdateService.RequestRestart();
-            Close();
-            return;
-        }
-
         if (dlg.FoundUpdate != null)
         {
-            ShowUpdateAvailable(dlg.FoundUpdate);
+            OfferUpdate(dlg.FoundUpdate, manual: true);
             ShowUpdateDialog(dlg.FoundUpdate);
         }
     }
 
     // ================================================================ updates
+    // Brand book: check at start and then once a day; the banner never takes the focus;
+    // "Later" / "×" hide it for this version, "Skip this version" in the dialog hides it for good.
 
-    async Task CheckUpdatesBackgroundAsync(int delayMs)
+    async Task CheckUpdatesBackgroundAsync(int delayMs, bool force)
     {
         try
         {
             if (delayMs > 0) await Task.Delay(delayMs);
             if (IsDisposed || !AppSettings.Current.AutoUpdateCheck) return;
+            var state = UpdateState.Current;
+            if (!force && DateTime.UtcNow - state.LastCheckUtc < TimeSpan.FromHours(24)) return;
+
             var info = await UpdateService.CheckAsync();
+            state.LastCheckUtc = DateTime.UtcNow;
+            state.Save();
             if (IsDisposed || info == null) return;
-            if (string.Equals(info.Tag, AppSettings.Current.SkippedVersion, StringComparison.OrdinalIgnoreCase)) return;
-            ShowUpdateAvailable(info);
+            OfferUpdate(info, manual: false);
         }
-        catch { }   // offline, GitHub limit etc. - try again later
+        catch { }   // offline, GitHub limit etc.: stay silent, try again later
     }
 
-    void ShowUpdateAvailable(UpdateInfo info)
+    void OfferUpdate(UpdateInfo info, bool manual)
     {
+        var state = UpdateState.Current;
+        if (!manual && string.Equals(info.Tag, state.SkippedVersion, StringComparison.OrdinalIgnoreCase)) return;
+
         pendingUpdate = info;
-        stUpdate.Text = L.F("upd.available", info.VersionText);
+        stUpdate.Text = Lang.Format("upd.available", info.VersionText);
         stUpdate.Visible = true;
+        if (manual || !state.IsSuppressed(info.Tag)) banner.ShowFor(info);
     }
 
     void ShowUpdateDialog(UpdateInfo info)
@@ -878,8 +911,9 @@ sealed class MainForm : Form
 
         if (dlg.SkipRequested)
         {
-            AppSettings.Current.SkippedVersion = info.Tag;
-            AppSettings.Current.Save();
+            UpdateState.Current.SkippedVersion = info.Tag;
+            UpdateState.Current.Save();
+            banner.HideBanner();
             stUpdate.Visible = false;
             pendingUpdate = null;
             return;
@@ -892,7 +926,7 @@ sealed class MainForm : Form
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, L.F("upd.failed", ex.Message), L.T("upd.title"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(this, Lang.Format("upd.failed", ex.Message), Lang.Get("app.title"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
         Close();   // Program starts the new version after the window is closed
@@ -916,19 +950,21 @@ sealed class MainForm : Form
         string mid = "";
         if (s != null && s.MissingAtOpen > 0 && s.Done < s.MissingAtOpen)
         {
-            mid = L.F("status.index", Math.Min(s.Done, s.MissingAtOpen), s.MissingAtOpen);
+            mid = Lang.Format("status.index", Math.Min(s.Done, s.MissingAtOpen), s.MissingAtOpen);
         }
         else if (indexer.Active)
         {
             string folder = indexer.CurrentFolder ?? "";
             string name = Path.GetFileName(folder.TrimEnd('\\', '/'));
-            mid = L.F("status.bg", string.IsNullOrEmpty(name) ? folder : name);
+            mid = Lang.Format("status.bg", string.IsNullOrEmpty(name) ? folder : name);
         }
         else if (s != null && s.MissingAtOpen > 0)
         {
-            mid = L.T("status.ready");
+            mid = Lang.Get("status.ready");
         }
-        if (stMid.Text != mid) stMid.Text = mid;
+        // the timer owns the state zone only while it has something to say; errors stay until the next folder
+        if (mid.Length > 0) { if (stState.Text != mid) stState.Text = mid; stateFromTimer = true; }
+        else if (stateFromTimer) { stState.Text = ""; stateFromTimer = false; }
 
         if ((DateTime.UtcNow - lastClean).TotalHours >= 6)
         {
@@ -972,12 +1008,6 @@ sealed class MainForm : Form
                 return true;
         }
         return base.ProcessCmdKey(ref msg, keyData);
-    }
-
-    protected override void OnHandleCreated(EventArgs e)
-    {
-        base.OnHandleCreated(e);
-        Theme.DarkTitleBar(this);
     }
 
     protected override void OnShown(EventArgs e)
@@ -1026,8 +1056,8 @@ sealed class MainForm : Form
         OpenFolder(start, false);
         indexer.Start();
 
-        _ = CheckUpdatesBackgroundAsync(8000);
-        updTimer.Tick += (_, _) => _ = CheckUpdatesBackgroundAsync(0);
+        _ = CheckUpdatesBackgroundAsync(8000, force: true);
+        updTimer.Tick += (_, _) => _ = CheckUpdatesBackgroundAsync(0, force: false);
         updTimer.Start();
     }
 
@@ -1044,6 +1074,7 @@ sealed class MainForm : Form
         uiTimer.Stop();
         updTimer.Stop();
         fsTimer.Stop();
+        systemTheme.Dispose();
         watcher?.Dispose();
         watcher = null;
         openCts?.Cancel();

@@ -10,7 +10,7 @@ namespace Skimmer;
 /// Items: subfolders first, then images (see FolderSession). Explorer-style selection:
 /// click, Ctrl+click, Shift+click, Shift+arrows, Ctrl+A.
 /// </summary>
-sealed class ThumbGrid : Control
+sealed class ThumbGrid : Control, IThemeAware
 {
     sealed class LruItem { public int Index; public Bitmap Bmp; }
 
@@ -23,11 +23,6 @@ sealed class ThumbGrid : Control
     readonly Dictionary<int, LinkedListNode<LruItem>> lru = new();
     readonly HashSet<int> failed = new();
     readonly HashSet<int> selection = new();
-    readonly SolidBrush tileBrush = new(Theme.Tile);
-    readonly SolidBrush selBrush = new(Theme.TileSelected);
-    readonly SolidBrush folderBack = new(Color.FromArgb(200, 160, 60));
-    readonly SolidBrush folderFront = new(Color.FromArgb(235, 195, 85));
-    readonly Pen focusPen = new(Theme.Accent, 2f);
 
     FolderSession session;
     int tileSize = 160;
@@ -48,9 +43,7 @@ sealed class ThumbGrid : Control
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer |
                  ControlStyles.UserPaint | ControlStyles.Selectable | ControlStyles.ResizeRedraw, true);
         TabStop = true;
-        BackColor = Theme.GridBack;
-        ForeColor = Theme.Text;
-        Font = new Font("Segoe UI", 9f);
+        Font = UiTheme.Default;
 
         vsb = new VScrollBar { Dock = DockStyle.Right };
         vsb.ValueChanged += (s, e) =>
@@ -69,7 +62,7 @@ sealed class ThumbGrid : Control
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        Theme.DarkControl(vsb);
+        ThemeNative.ApplyExplorerTheme(vsb.Handle, ThemeService.Current.IsDark);
     }
 
     // ------------------------------------------------------------ public API
@@ -375,13 +368,17 @@ sealed class ThumbGrid : Control
         if (count == 0)
         {
             var area = new Rectangle(0, 0, Math.Max(1, Width - vsb.Width), Height);
-            TextRenderer.DrawText(g, L.T("grid.empty"), Font, area, Theme.TextDim,
+            TextRenderer.DrawText(g, Lang.Get("grid.empty"), Font, area, ThemeService.Palette.Muted,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
             return;
         }
 
         g.InterpolationMode = InterpolationMode.Bilinear;
         g.PixelOffsetMode = PixelOffsetMode.Half;
+
+        var pal = ThemeService.Palette;
+        int radius = ThemeService.Current.CornerRadius;
+        Color selFill = ThemeDraw.Blend(pal.InputBack, pal.Accent, 0.22f);
 
         int tile = (int)(tileSize * Dpi);
         int firstRow = scroll / cellH;
@@ -398,8 +395,11 @@ sealed class ThumbGrid : Control
             var cell = new Rectangle(x + 4, y + 4, cellW - 8, cellH - 8);
             if (!cell.IntersectsWith(e.ClipRectangle)) { if (NeedsThumb(i)) wanted.Add(i); continue; }
 
+            // tiles are cards (brand book: input colour, 1 px border, theme corner radius);
+            // the selection is 22 % accent, the same mix the brand book uses for a highlighted target
             bool sel = selection.Contains(i);
-            g.FillRectangle(sel ? selBrush : tileBrush, cell);
+            ThemeDraw.FillRounded(g, cell, radius, sel ? selFill : pal.InputBack);
+            ThemeDraw.DrawRounded(g, cell, radius, sel ? pal.Accent : pal.Border);
 
             var imgArea = new Rectangle(cell.X + 4, cell.Y + 4, cell.Width - 8, tile);
             var bmp = GetCached(i);
@@ -415,7 +415,7 @@ sealed class ThumbGrid : Control
             }
             else if (failed.Contains(i))
             {
-                TextRenderer.DrawText(g, L.T("grid.broken"), Font, imgArea, Theme.TextDim,
+                TextRenderer.DrawText(g, Lang.Get("grid.broken"), Font, imgArea, pal.Muted,
                     TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
             }
             else wanted.Add(i);
@@ -423,13 +423,13 @@ sealed class ThumbGrid : Control
             if (showNames)
             {
                 var nameArea = new Rectangle(cell.X + 2, imgArea.Bottom + 2, cell.Width - 4, cell.Bottom - imgArea.Bottom - 4);
-                TextRenderer.DrawText(g, session.ItemName(i), Font, nameArea, Theme.Text,
+                TextRenderer.DrawText(g, session.ItemName(i), Font, nameArea, pal.Fore,
                     TextFormatFlags.EndEllipsis | TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter |
                     TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding);
             }
 
             if (i == focus && Focused)
-                g.DrawRectangle(focusPen, cell.X + 1, cell.Y + 1, cell.Width - 2, cell.Height - 2);
+                ThemeDraw.DrawRounded(g, Rectangle.Inflate(cell, -1, -1), radius, pal.Accent, 2f);
         }
 
         // Ask the workers for what is missing: visible tiles first, then rows above/below.
@@ -460,6 +460,9 @@ sealed class ThumbGrid : Control
         int tabW = w * 2 / 5, tabH = Math.Max(4, h / 9);
         int r = Math.Max(2, s / 40);
 
+        var pal = ThemeService.Palette;
+        using var folderFront = new SolidBrush(pal.FolderIcon);
+        using var folderBack = new SolidBrush(ThemeDraw.Blend(pal.FolderIcon, pal.Fore, 0.2f));
         g.SmoothingMode = SmoothingMode.AntiAlias;
         using (var back = RoundRect(new Rectangle(x, y, w, h), r))
             g.FillPath(folderBack, back);
@@ -653,6 +656,17 @@ sealed class ThumbGrid : Control
     protected override void OnGotFocus(EventArgs e) { base.OnGotFocus(e); Invalidate(); }
     protected override void OnLostFocus(EventArgs e) { base.OnLostFocus(e); Invalidate(); }
 
+    /// <summary>The grid area is a panel; tiles read the palette while painting.</summary>
+    public void ApplyTheme()
+    {
+        BackColor = ThemeService.Palette.PanelBack;
+        ForeColor = ThemeService.Palette.Fore;
+        Font = UiTheme.Default;
+        if (vsb.IsHandleCreated) ThemeNative.ApplyExplorerTheme(vsb.Handle, ThemeService.Current.IsDark);
+        RecalcLayout();
+        Invalidate();
+    }
+
     protected override void Dispose(bool disposing)
     {
         if (disposing)
@@ -660,11 +674,6 @@ sealed class ThumbGrid : Control
             pump.Stop();
             pump.Dispose();
             ClearCache();
-            tileBrush.Dispose();
-            selBrush.Dispose();
-            folderBack.Dispose();
-            folderFront.Dispose();
-            focusPen.Dispose();
         }
         base.Dispose(disposing);
     }

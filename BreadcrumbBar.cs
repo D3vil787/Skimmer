@@ -9,7 +9,7 @@ namespace Skimmer;
 /// Ctrl+L or F4 switches to a plain text box (Enter = go, Esc = back to the crumbs).
 /// When the path does not fit, the leading folders collapse into a « menu.
 /// </summary>
-sealed class BreadcrumbBar : Control
+sealed class BreadcrumbBar : Control, IThemeAware
 {
     enum PartKind { Segment, Arrow, Overflow }
 
@@ -36,14 +36,11 @@ sealed class BreadcrumbBar : Control
     {
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer |
                  ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
-        BackColor = Theme.Input;
-        ForeColor = Theme.Text;
-        Font = new Font("Segoe UI", 9.5f);
+        Font = UiTheme.Default;
         Cursor = Cursors.Default;
 
         edit.BorderStyle = BorderStyle.None;
-        edit.BackColor = Theme.Input;
-        edit.ForeColor = Theme.Text;
+        edit.Font = UiTheme.Mono;   // brand book: paths in Consolas
         edit.Visible = false;
         edit.KeyDown += (_, e) =>
         {
@@ -63,9 +60,6 @@ sealed class BreadcrumbBar : Control
         edit.LostFocus += (_, _) => { if (edit.Visible) EndEdit(false); };
         Controls.Add(edit);
 
-        menu.Renderer = new DarkRenderer();
-        menu.BackColor = Theme.Bar;
-        menu.ForeColor = Theme.Text;
         menu.ShowImageMargin = false;
         menu.Closed += (_, _) => { pressed = null; Invalidate(); };
     }
@@ -188,7 +182,8 @@ sealed class BreadcrumbBar : Control
     {
         var g = e.Graphics;
         g.Clear(BackColor);
-        using (var border = new Pen(Theme.Border))
+        var pal = ThemeService.Palette;
+        using (var border = new Pen(pal.InputBorder))
             g.DrawRectangle(border, 0, 0, Width - 1, Height - 1);
         if (edit.Visible) return;
 
@@ -197,7 +192,7 @@ sealed class BreadcrumbBar : Control
             bool isHot = p == hot || p == pressed;
             if (isHot)
             {
-                using var b = new SolidBrush(p == pressed ? Theme.Pressed : Theme.Hover);
+                using var b = new SolidBrush(p == pressed ? UiStyle.ButtonPressed : UiStyle.ButtonHover);
                 g.FillRectangle(b, p.Rect);
             }
 
@@ -205,13 +200,13 @@ sealed class BreadcrumbBar : Control
             switch (p.Kind)
             {
                 case PartKind.Segment:
-                    TextRenderer.DrawText(g, segs[p.Seg].Name, Font, p.Rect, Theme.Text, flags);
+                    TextRenderer.DrawText(g, segs[p.Seg].Name, Font, p.Rect, pal.Fore, flags);
                     break;
                 case PartKind.Arrow:
-                    TextRenderer.DrawText(g, p == pressed ? "▾" : "›", Font, p.Rect, Theme.TextDim, flags);
+                    TextRenderer.DrawText(g, p == pressed ? "▾" : "›", Font, p.Rect, pal.Muted, flags);
                     break;
                 case PartKind.Overflow:
-                    TextRenderer.DrawText(g, "«", Font, p.Rect, Theme.TextDim, flags);
+                    TextRenderer.DrawText(g, "«", Font, p.Rect, pal.Muted, flags);
                     break;
             }
         }
@@ -289,17 +284,33 @@ sealed class BreadcrumbBar : Control
         foreach (var it in items.Take(500))
         {
             string target = it.Path;
-            var mi = new ToolStripMenuItem(it.Text) { ForeColor = Theme.Text };
-            if (it.Bold) mi.Font = new Font(menu.Font, FontStyle.Bold);
+            var mi = new ToolStripMenuItem(it.Text);
+            if (it.Bold) mi.Font = UiTheme.Medium;
             mi.Click += (_, _) => Navigate?.Invoke(target);
             menu.Items.Add(mi);
         }
         if (menu.Items.Count == 0)
             menu.Items.Add(new ToolStripMenuItem("—") { Enabled = false });
 
+        ThemeService.Apply(menu);
         pressed = p;
         Invalidate();
         menu.Show(this, new Point(p.Rect.Left, Height));
+    }
+
+    /// <summary>Input-field colours (brand book: "Поле ввода" / "Рамка поля"), font 10 pt, path editor in Consolas.</summary>
+    public void ApplyTheme()
+    {
+        var p = ThemeService.Palette;
+        BackColor = p.InputBack;
+        ForeColor = p.Fore;
+        Font = UiTheme.Default;
+        edit.BackColor = p.InputBack;
+        edit.ForeColor = p.Fore;
+        edit.Font = UiTheme.Mono;
+        LayoutParts();
+        PlaceEdit();
+        Invalidate();
     }
 
     protected override void Dispose(bool disposing)

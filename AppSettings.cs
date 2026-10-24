@@ -21,10 +21,12 @@ sealed class AppSettings
     public bool SortDescending { get; set; } = false;
     public bool ShowOverlay { get; set; } = true;   // info bar in full-screen viewer
     public string Language { get; set; } = "auto";  // auto | ru | en
-    public string Theme { get; set; } = "dark";     // dark | light | system
+    /// <summary>Theme of Skimmer 0.4 - 0.5 (dark | light | system). Only read once to fill theme-settings.json.</summary>
+    public string Theme { get; set; } = "";
 
     // Updates
     public bool AutoUpdateCheck { get; set; } = true;
+    /// <summary>Skimmer 0.2 - 0.5; moved to update-state.json.</summary>
     public string SkippedVersion { get; set; } = "";
 
     // Window state

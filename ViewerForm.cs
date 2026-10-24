@@ -56,12 +56,12 @@ sealed class ViewerForm : Form
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.Manual;
         Bounds = screen;
-        BackColor = Color.Black;
+        BackColor = ViewerColors.Back;
         ShowInTaskbar = false;
         KeyPreview = true;
         DoubleBuffered = true;
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint, true);
-        Text = "Skimmer";
+        Text = Lang.Get("app.title");
     }
 
     protected override void OnShown(EventArgs e)
@@ -248,7 +248,7 @@ sealed class ViewerForm : Form
     protected override void OnPaint(PaintEventArgs e)
     {
         var g = e.Graphics;
-        g.Clear(Color.Black);
+        g.Clear(ViewerColors.Back);
 
         int ow = 0, oh = 0;
         bool shown = false;
@@ -279,7 +279,7 @@ sealed class ViewerForm : Form
 
         if (!shown && failed.Contains(index))
         {
-            TextRenderer.DrawText(g, L.T("viewer.error"), new Font("Segoe UI", 14f), ClientRectangle, Color.Gray,
+            TextRenderer.DrawText(g, Lang.Get("viewer.error"), UiTheme.Subtitle, ClientRectangle, ViewerColors.Muted,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
         }
 
@@ -305,12 +305,12 @@ sealed class ViewerForm : Form
         string text = $"{pos} / {total}   {f.Name}{dims}   {Fmt.Size(f.Size)}   {Fmt.Date(f.Modified)}";
         if (zoom100) text += "   100%";
 
-        using var font = new Font("Segoe UI", 11f);
+        var font = UiTheme.Default;
         var size = TextRenderer.MeasureText(g, text, font);
         var bar = new Rectangle(0, ClientSize.Height - size.Height - 14, ClientSize.Width, size.Height + 14);
-        using var br = new SolidBrush(Color.FromArgb(150, 0, 0, 0));
+        using var br = new SolidBrush(ViewerColors.InfoBar);
         g.FillRectangle(br, bar);
-        TextRenderer.DrawText(g, text, font, new Rectangle(bar.X + 14, bar.Y, bar.Width - 28, bar.Height), Color.FromArgb(230, 230, 230),
+        TextRenderer.DrawText(g, text, font, new Rectangle(bar.X + 14, bar.Y, bar.Width - 28, bar.Height), ViewerColors.InfoText,
             TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
     }
 
@@ -399,4 +399,16 @@ sealed class ViewerForm : Form
         }
         base.Dispose(disposing);
     }
+}
+
+/// <summary>
+/// The full-screen viewer stays black in both themes: a photo is judged against a neutral dark surround.
+/// Not in BRANDBOOK.md yet - proposed as an addition ("Полноэкранный просмотр"); kept in one place until agreed.
+/// </summary>
+static class ViewerColors
+{
+    public static readonly Color Back = Color.Black;
+    public static readonly Color InfoBar = Color.FromArgb(150, 0, 0, 0);
+    public static readonly Color InfoText = ColorTranslator.FromHtml("#E6E6E6");
+    public static readonly Color Muted = ColorTranslator.FromHtml("#8791A3");   // Graphite Dark "muted"
 }
