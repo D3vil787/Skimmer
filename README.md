@@ -11,7 +11,7 @@ compact on-disk cache, and the next time you open that folder everything appears
 
 ## Features
 
-- **Explorer-style layout** – folder tree + thumbnail grid, address bar, back / forward / up, drag & drop a folder or photo onto the window.
+- **Explorer-style layout** – folder tree + thumbnail grid, clickable breadcrumb address bar (› lists subfolders, click the empty part to type a path), back / forward / up, drag & drop a folder or photo onto the window.
 - **Subfolders as tiles** with a preview of the first photos inside; going *Up* selects the folder you came from.
 - **Explorer-style selection** – Ctrl+click, Shift+click, Shift+arrows, Ctrl+A; `Del` sends to the Recycle Bin, `Shift+Del` deletes permanently (Windows asks). Works in the full-screen viewer too, handy for culling.
 - **Built for huge folders** – the grid is fully virtual, so 50,000 photos in one folder cost no more than 50.
