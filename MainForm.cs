@@ -43,6 +43,8 @@ sealed class MainForm : Form
     int pendingSelectGrid = -1; // ...or this grid index if the name is gone
     UpdateInfo pendingUpdate;
     bool splitReady;            // splitter restored; safe to save its position
+    bool userDragsSplitter;     // set by SplitterMoving, which fires only for a user drag
+    int treeWidth96 = -1;       // tree width the user chose, in 96-dpi units
     int ctxIndex = -1;
     bool cacheCleared;
     DateTime lastClean = DateTime.MinValue;
@@ -269,6 +271,16 @@ sealed class MainForm : Form
         split.Panel2.BackColor = Theme.GridBack;
         split.Panel1.Controls.Add(tree);
         split.Panel2.Controls.Add(grid);
+
+        // Remember only widths the user sets by dragging. Programmatic changes (initial layout,
+        // clamping while the window is minimized or shrunk) must not overwrite the saved width.
+        split.SplitterMoving += (_, _) => userDragsSplitter = true;
+        split.SplitterMoved += (_, _) =>
+        {
+            if (!splitReady || !userDragsSplitter) return;
+            userDragsSplitter = false;
+            treeWidth96 = Math.Max(60, (int)Math.Round(split.SplitterDistance * 96f / DeviceDpi));
+        };
 
         // docking order: fill first, then bottom, then top
         Controls.Add(split);
@@ -876,6 +888,7 @@ sealed class MainForm : Form
             int max = Math.Max(split.Panel1MinSize, w - split.Panel2MinSize - split.SplitterWidth);
             int want = (int)Math.Round(s.TreeWidth * DeviceDpi / 96f);   // stored in 96-dpi units
             split.SplitterDistance = Math.Clamp(want, split.Panel1MinSize, max);
+            treeWidth96 = s.TreeWidth;   // keep the saved value even if the window is too small to show it fully
             splitReady = true;
         }
         catch { }
@@ -919,7 +932,7 @@ sealed class MainForm : Form
         s.Maximized = WindowState == FormWindowState.Maximized;
         var b = WindowState == FormWindowState.Normal ? Bounds : RestoreBounds;
         s.WindowX = b.X; s.WindowY = b.Y; s.WindowW = b.Width; s.WindowH = b.Height;
-        if (splitReady) s.TreeWidth = Math.Max(60, (int)Math.Round(split.SplitterDistance * 96f / DeviceDpi));
+        if (treeWidth96 > 0) s.TreeWidth = treeWidth96;
         s.Save();
 
         uiTimer.Stop();
