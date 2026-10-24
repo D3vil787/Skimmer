@@ -11,12 +11,22 @@
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <AssemblyName>Skimmer</AssemblyName>
     <RootNamespace>Skimmer</RootNamespace>
-    <Version>0.5.0</Version>
+    <Version>0.6.0</Version>
     <Product>Skimmer</Product>
     <Description>Fast portable photo browser</Description>
     <ApplicationIcon>Skimmer.ico</ApplicationIcon>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Interface texts (brand book: "Тексты интерфейса хранятся в файлах локализации") -->
+    <EmbeddedResource Include="assets/Languages/*.json" LogicalName="Skimmer.Languages.%(Filename)%(Extension)" />
+    <InternalsVisibleTo Include="Skimmer.Tests" />
+    <!-- the test project lives in tests/ and is built separately -->
+    <Compile Remove="tests/**" />
+    <EmbeddedResource Remove="tests/**" />
+    <None Remove="tests/**" />
+  </ItemGroup>
 
   <!-- Portable single exe: dotnet publish -c Release -p:PublishSingleFile=true -->
   <PropertyGroup Condition="'$(PublishSingleFile)' == 'true'">

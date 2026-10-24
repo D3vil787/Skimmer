@@ -34,6 +34,13 @@ jobs:
           fi
           echo "Version: $VER"
 
+      # Brand book: every program keeps the palette contrast test (UiKit tests/ThemeCatalogTests.cs)
+      - name: Test (palette contrast, language files)
+        shell: bash
+        run: |
+          mkdir -p logs
+          dotnet test tests/Skimmer.Tests/Skimmer.Tests.csproj -c Release 2>&1 | tee logs/tests.log
+
       - name: Publish portable exe (self-contained, nothing to install)
         shell: bash
         run: |
@@ -73,7 +80,7 @@ jobs:
         run: |
           mkdir -p ci
           cp -r logs/. ci/ 2>/dev/null || true
-          grep -hE "error |warning CS" logs/*.log > ci/errors.txt 2>/dev/null || true
+          grep -hE "error |warning CS|\[FAIL\]|Failed |Assert\." logs/*.log > ci/errors.txt 2>/dev/null || true
           {
             echo "commit: $GITHUB_SHA"
             echo "ref: $GITHUB_REF"

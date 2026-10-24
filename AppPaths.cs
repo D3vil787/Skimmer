@@ -32,6 +32,13 @@ static class AppPaths
     public static string SettingsFile => Path.Combine(DataDir, "Skimmer.settings.json");
     public static string CacheDir => Path.Combine(DataDir, "SkimmerCache");
     public static string LogFile => Path.Combine(DataDir, "Skimmer.log");
+    public static string LogsDirectory => Path.Combine(DataDir, "logs");
+
+    /// <summary>Theme, accent and density (UiKit standard file name).</summary>
+    public static string ThemeSettingsFile => Path.Combine(DataDir, "theme-settings.json");
+
+    /// <summary>Last update check, dismissed and skipped versions.</summary>
+    public static string UpdateStateFile => Path.Combine(DataDir, "update-state.json");
 
     static bool IsTemp(string dir)
     {

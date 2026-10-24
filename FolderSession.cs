@@ -387,7 +387,7 @@ sealed class FolderSession : IDisposable
         const int size = 256, gap = 4;
         var bmp = new Bitmap(size, size, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
         using var g = Graphics.FromImage(bmp);
-        g.Clear(Color.FromArgb(40, 40, 40));
+        g.Clear(Color.Transparent);   // gaps show the folder colour of the tile
         g.InterpolationMode = InterpolationMode.HighQualityBilinear;
         g.PixelOffsetMode = PixelOffsetMode.Half;
 
