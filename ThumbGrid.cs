@@ -133,6 +133,90 @@ sealed class ThumbGrid : Control
         SelectionChanged?.Invoke();
     }
 
+    static string Key(FolderSession s, int g) => (s.IsFolder(g) ? "D|" : "F|") + s.ItemName(g);
+
+    /// <summary>Same file and unchanged on disk, so its thumbnail (or "cannot decode" mark) is still valid.</summary>
+    static bool SameContent(FolderSession a, int ga, FolderSession b, int gb)
+    {
+        if (a.IsFolder(ga) || b.IsFolder(gb)) return a.IsFolder(ga) && b.IsFolder(gb);
+        var fa = a.Files[a.FileIndex(ga)];
+        var fb = b.Files[b.FileIndex(gb)];
+        return fa.Mtime == fb.Mtime && fa.Size == fb.Size;
+    }
+
+    /// <summary>
+    /// Replaces the folder contents after a change on disk without visual disruption:
+    /// keeps scroll position, selection and already decoded thumbnails (matched by name).
+    /// preferFocusName: select this item instead (e.g. the neighbour of deleted files).
+    /// </summary>
+    public void SwapSession(FolderSession ns, string preferFocusName = null)
+    {
+        var old = session;
+        if (old == null || ns == null)
+        {
+            SetSession(ns);
+            return;
+        }
+
+        var index = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        for (int g = 0; g < ns.ItemCount; g++) index[Key(ns, g)] = g;
+
+        int Map(int gOld) =>
+            gOld >= 0 && gOld < old.ItemCount && index.TryGetValue(Key(old, gOld), out var g) ? g : -1;
+
+        // thumbnails
+        var items = lruList.ToList();
+        lruList.Clear();
+        lru.Clear();
+        foreach (var it in items)
+        {
+            int g = Map(it.Index);
+            if (g >= 0 && SameContent(old, it.Index, ns, g))
+            {
+                it.Index = g;
+                lru[g] = lruList.AddLast(it);
+            }
+            else it.Bmp.Dispose();
+        }
+        var oldFailed = failed.ToList();
+        failed.Clear();
+        foreach (int f in oldFailed)
+        {
+            int g = Map(f);
+            if (g >= 0 && SameContent(old, f, ns, g)) failed.Add(g);
+        }
+
+        // selection
+        int oldFocus = focus;
+        var newSel = selection.Select(Map).Where(g => g >= 0).ToList();
+        int newFocus = Map(focus);
+        int newAnchor = Map(anchor);
+
+        session = ns;
+        selection.Clear();
+        if (preferFocusName != null)
+        {
+            int g = -1;
+            for (int i = 0; i < ns.ItemCount; i++)
+                if (string.Equals(ns.ItemName(i), preferFocusName, StringComparison.OrdinalIgnoreCase)) { g = i; break; }
+            newFocus = newAnchor = g;
+            newSel.Clear();
+            if (g >= 0) newSel.Add(g);
+        }
+        if (newFocus < 0 && ns.ItemCount > 0 && oldFocus >= 0)
+        {
+            newFocus = Math.Min(oldFocus, ns.ItemCount - 1);    // focused item disappeared: stay at the same place
+            newSel.Add(newFocus);
+        }
+        foreach (int g in newSel) selection.Add(g);
+        focus = newFocus;
+        anchor = newAnchor >= 0 ? newAnchor : newFocus;
+
+        RecalcLayout();          // keeps the scroll offset (clamped to the new size)
+        Invalidate();
+        SelectionChanged?.Invoke();
+    }
+
     /// <summary>Selects exactly one item.</summary>
     public void SelectIndex(int i, bool ensureVisible = true)
     {
