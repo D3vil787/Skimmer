@@ -22,7 +22,7 @@ compact on-disk cache, and the next time you open that folder everything appears
 - **Portable** – settings (`Skimmer.settings.json`) and cache (`SkimmerCache\`) live next to `Skimmer.exe`. If that folder is read-only, `%LOCALAPPDATA%\Skimmer` is used.
 - **Self-cleaning cache** – cache of folders you have not opened for N days (default 30) is deleted automatically, plus a total size cap (default 4 GB).
 - **Self-update from GitHub Releases** – a link appears in the status bar when a new version is out; the new exe is downloaded, verified by SHA-256 and swapped in place.
-- Dark theme, Russian and English UI (follows Windows language, can be forced in Settings).
+- Dark / light theme (or follow Windows), Russian and English UI (follows Windows language, can be forced in Settings).
 
 Supported formats: JPEG, PNG, BMP, GIF, TIFF, ICO, JPEG XR and – if the corresponding Windows codecs are installed – WebP and HEIC.
 

@@ -11,7 +11,7 @@
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <AssemblyName>Skimmer</AssemblyName>
     <RootNamespace>Skimmer</RootNamespace>
-    <Version>0.3.0</Version>
+    <Version>0.4.0</Version>
     <Product>Skimmer</Product>
     <Description>Fast portable photo browser</Description>
     <ApplicationIcon>Skimmer.ico</ApplicationIcon>

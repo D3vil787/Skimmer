@@ -21,6 +21,7 @@ sealed class AppSettings
     public bool SortDescending { get; set; } = false;
     public bool ShowOverlay { get; set; } = true;   // info bar in full-screen viewer
     public string Language { get; set; } = "auto";  // auto | ru | en
+    public string Theme { get; set; } = "dark";     // dark | light | system
 
     // Updates
     public bool AutoUpdateCheck { get; set; } = true;

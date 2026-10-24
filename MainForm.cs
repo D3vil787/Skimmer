@@ -206,9 +206,9 @@ sealed class MainForm : Form
         stMid.Spring = true;
         stUpdate.IsLink = true;
         stUpdate.LinkBehavior = LinkBehavior.HoverUnderline;
-        stUpdate.LinkColor = Color.FromArgb(110, 180, 255);
-        stUpdate.ActiveLinkColor = Color.FromArgb(150, 205, 255);
-        stUpdate.VisitedLinkColor = Color.FromArgb(110, 180, 255);
+        stUpdate.LinkColor = Theme.Link;
+        stUpdate.ActiveLinkColor = Theme.LinkActive;
+        stUpdate.VisitedLinkColor = Theme.Link;
         stUpdate.Visible = false;
         stUpdate.Click += (_, _) => ShowUpdateDialog(pendingUpdate);
         status.Items.AddRange(new ToolStripItem[] { stLeft, stMid, stUpdate, stRight });
@@ -721,6 +721,14 @@ sealed class MainForm : Form
             Task.Run(() => CacheCleaner.Clean(AppSettings.Current));
         }
         if (cacheCleared) Reload();
+
+        if (result == DialogResult.OK && dlg.NeedsRestart &&
+            MessageBox.Show(this, L.T("set.restart"), L.T("app.title"), MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
+        {
+            UpdateService.RequestRestart();
+            Close();
+            return;
+        }
 
         if (dlg.FoundUpdate != null)
         {
