@@ -42,6 +42,7 @@ sealed class MainForm : Form
     string pendingSelectName;   // select this item after the next folder load
     int pendingSelectGrid = -1; // ...or this grid index if the name is gone
     UpdateInfo pendingUpdate;
+    bool splitReady;            // splitter restored; safe to save its position
     int ctxIndex = -1;
     bool cacheCleared;
     DateTime lastClean = DateTime.MinValue;
@@ -268,10 +269,6 @@ sealed class MainForm : Form
         split.Panel2.BackColor = Theme.GridBack;
         split.Panel1.Controls.Add(tree);
         split.Panel2.Controls.Add(grid);
-        split.SplitterMoved += (_, _) =>
-        {
-            if (WindowState == FormWindowState.Normal) AppSettings.Current.TreeWidth = split.SplitterDistance;
-        };
 
         // docking order: fill first, then bottom, then top
         Controls.Add(split);
@@ -877,7 +874,9 @@ sealed class MainForm : Form
             split.Panel1MinSize = Math.Min(140, Math.Max(25, w / 4));
             split.Panel2MinSize = Math.Min(300, Math.Max(25, w / 3));
             int max = Math.Max(split.Panel1MinSize, w - split.Panel2MinSize - split.SplitterWidth);
-            split.SplitterDistance = Math.Clamp(s.TreeWidth, split.Panel1MinSize, max);
+            int want = (int)Math.Round(s.TreeWidth * DeviceDpi / 96f);   // stored in 96-dpi units
+            split.SplitterDistance = Math.Clamp(want, split.Panel1MinSize, max);
+            splitReady = true;
         }
         catch { }
 
@@ -920,6 +919,7 @@ sealed class MainForm : Form
         s.Maximized = WindowState == FormWindowState.Maximized;
         var b = WindowState == FormWindowState.Normal ? Bounds : RestoreBounds;
         s.WindowX = b.X; s.WindowY = b.Y; s.WindowW = b.Width; s.WindowH = b.Height;
+        if (splitReady) s.TreeWidth = Math.Max(60, (int)Math.Round(split.SplitterDistance * 96f / DeviceDpi));
         s.Save();
 
         uiTimer.Stop();
