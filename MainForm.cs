@@ -13,7 +13,7 @@ sealed class MainForm : Form
     readonly SplitContainer split = new();
     readonly TreeView tree = new();
     readonly ThumbGrid grid = new();
-    readonly TextBox addr = new();
+    readonly BreadcrumbBar addr = new();
     readonly ComboBox cmbSort = new();
     readonly TrackBar trk = new();
     readonly CheckBox chkNames = new();
@@ -123,25 +123,14 @@ sealed class MainForm : Form
         btnRefresh = Theme.FlatButton("⟳", L.T("tip.refresh"), tips, (_, _) => Reload());
         left.Controls.AddRange(new Control[] { btnBack, btnFwd, btnUp, btnRefresh });
 
-        addr.Anchor = AnchorStyles.Left | AnchorStyles.Right;
-        addr.Margin = new Padding(8, 10, 8, 0);
-        addr.BorderStyle = BorderStyle.FixedSingle;
-        addr.BackColor = Theme.Input;
-        addr.ForeColor = Theme.Text;
-        addr.KeyDown += (_, e) =>
+        addr.Dock = DockStyle.Fill;
+        addr.Margin = new Padding(8, 7, 8, 7);
+        addr.Navigate += p =>
         {
-            if (e.KeyCode == Keys.Enter)
-            {
-                e.SuppressKeyPress = true;
-                OpenFolder(addr.Text, true);
-                grid.Focus();
-            }
-            else if (e.KeyCode == Keys.Escape)
-            {
-                addr.Text = currentPath ?? "";
-                grid.Focus();
-            }
+            OpenFolder(p, true);
+            grid.Focus();
         };
+        addr.EditFinished += () => grid.Focus();
 
         var right = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = Padding.Empty, Dock = DockStyle.Fill, BackColor = Theme.Bar };
         cmbSort.DropDownStyle = ComboBoxStyle.DropDownList;
@@ -495,7 +484,7 @@ sealed class MainForm : Form
             fwd.Clear();
         }
         currentPath = path;
-        addr.Text = path;
+        addr.PathText = path;
         if (!string.Equals(AppSettings.Current.LastFolder, path, StringComparison.OrdinalIgnoreCase))
         {
             AppSettings.Current.LastFolder = path;
@@ -861,8 +850,7 @@ sealed class MainForm : Form
             case Keys.Alt | Keys.Up: GoUp(); return true;
             case Keys.Control | Keys.L:
             case Keys.F4:
-                addr.Focus();
-                addr.SelectAll();
+                addr.BeginEdit();
                 return true;
         }
         return base.ProcessCmdKey(ref msg, keyData);
