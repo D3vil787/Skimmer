@@ -24,7 +24,6 @@ sealed class MainForm : Form, IThemeAware
     readonly ToolStripStatusLabel stUpdate = new();  // update zone (right)
     readonly UpdateBanner banner = new();
     readonly SystemThemeWatcher systemTheme = new();
-    readonly ContextMenuStrip ctx = new();
     readonly System.Windows.Forms.Timer uiTimer = new() { Interval = 400 };
     readonly System.Windows.Forms.Timer updTimer = new() { Interval = 60 * 60 * 1000 };   // hourly tick, checks once a day
     readonly BackgroundIndexer indexer;
@@ -284,7 +283,6 @@ sealed class MainForm : Form, IThemeAware
         Controls.Add(banner);
         Controls.Add(bar);
 
-        BuildContextMenu();
         tree.ImageList = MakeIcons();
         BuildTree();
         ActiveControl = grid;
@@ -305,8 +303,6 @@ sealed class MainForm : Form, IThemeAware
         var oldIcons = tree.ImageList;
         tree.ImageList = MakeIcons();
         oldIcons?.Dispose();
-
-        ThemeService.Apply(ctx);
     }
 
     /// <summary>Tree icons in the palette colours (folder, drive, indexed-folders star).</summary>
@@ -345,21 +341,6 @@ sealed class MainForm : Form, IThemeAware
             g.DrawString("★", f, br, -1, 0);
         }));
         return il;
-    }
-
-    /// <summary>Menu for the empty part of the grid (the item menu is Explorer's own, see ShowItemMenu).</summary>
-    void BuildContextMenu()
-    {
-        var refresh = new ToolStripMenuItem(Lang.Get("ctx.refresh")) { ShortcutKeyDisplayString = "F5" };
-        refresh.Click += (_, _) => Reload();
-        var explorer = new ToolStripMenuItem(Lang.Get("ctx.folderexplorer"));
-        explorer.Click += (_, _) =>
-        {
-            if (currentPath == null) return;
-            try { Process.Start(new ProcessStartInfo("explorer.exe", $"\"{currentPath}\"") { UseShellExecute = true }); } catch { }
-        };
-        ctx.Items.AddRange(new ToolStripItem[] { refresh, new ToolStripSeparator(), explorer });
-        ThemeService.Apply(ctx);
     }
 
     void SetState(string text)
@@ -696,11 +677,21 @@ sealed class MainForm : Form, IThemeAware
         ShellContextMenu.Show(grid, paths, screenPos, own);
     }
 
+    /// <summary>Right click on the empty part of the grid: the Explorer menu of the folder itself
+    /// (Paste, New, Share, Properties, shell extensions) with Refresh / Open in Explorer on top.</summary>
     void ShowBackgroundMenu(Point screenPos)
     {
         if (currentPath == null) return;
-        ThemeService.Apply(ctx);
-        ctx.Show(screenPos);
+        string folder = currentPath;
+        var own = new List<ShellContextMenu.Item>
+        {
+            new(Lang.Get("ctx.refresh") + "\tF5", Reload),
+            new(Lang.Get("ctx.folderexplorer"), () =>
+            {
+                try { Process.Start(new ProcessStartInfo("explorer.exe", $"\"{folder}\"") { UseShellExecute = true }); } catch { }
+            }),
+        };
+        ShellContextMenu.ShowBackground(grid, folder, screenPos, own);
     }
 
     List<string> SelectedPaths()
