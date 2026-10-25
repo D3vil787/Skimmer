@@ -48,7 +48,6 @@ static class ShellContextMenu
         var children = new List<IntPtr>();
         IntPtr parentPtr = IntPtr.Zero;
         IntPtr menuPtr = IntPtr.Zero;
-        IntPtr hmenu = IntPtr.Zero;
         IContextMenu cm = null;
         try
         {
@@ -69,7 +68,27 @@ static class ShellContextMenu
             parent.GetUIObjectOf(owner.Handle, (uint)children.Count, children.ToArray(), ref iidMenu, IntPtr.Zero, out menuPtr);
             cm = (IContextMenu)Marshal.GetObjectForIUnknown(menuPtr);
 
-            hmenu = CreatePopupMenu();
+            Track(owner, cm, screen, ownItems);
+        }
+        catch
+        {
+            // shell extensions can fail in many ways; never take the app down because of them
+        }
+        finally
+        {
+            if (cm != null) Marshal.ReleaseComObject(cm);
+            if (menuPtr != IntPtr.Zero) Marshal.Release(menuPtr);
+            if (parentPtr != IntPtr.Zero) Marshal.Release(parentPtr);
+            foreach (var p in absolute) Marshal.FreeCoTaskMem(p);
+        }
+    }
+
+    /// <summary>Puts Skimmer's items on top of the shell items, shows the menu and runs the chosen command.</summary>
+    static void Track(Control owner, IContextMenu cm, Point screen, IReadOnlyList<Item> ownItems)
+    {
+        IntPtr hmenu = CreatePopupMenu();
+        try
+        {
             uint pos = 0;
             for (int i = 0; i < ownItems.Count; i++)
             {
@@ -79,7 +98,6 @@ static class ShellContextMenu
             }
             if (ownItems.Count > 0) InsertMenu(hmenu, pos++, MF_BYPOSITION | MF_SEPARATOR, UIntPtr.Zero, null);
             int boldOwn = ownItems.ToList().FindIndex(x => x.Bold && x.Text != null);
-            if (boldOwn >= 0) SetMenuDefaultItem(hmenu, (uint)(boldOwn + 1), 0);
 
             uint flags = CMF_NORMAL | CMF_EXPLORE;
             if ((Control.ModifierKeys & Keys.Shift) != 0) flags |= CMF_EXTENDEDVERBS;
@@ -121,17 +139,50 @@ static class ShellContextMenu
                 cm.InvokeCommand(ref info);
             }
         }
+        finally
+        {
+            DestroyMenu(hmenu);
+        }
+    }
+
+    /// <summary>
+    /// The folder background menu (Paste, New, Share, Properties, shell extensions such as Dropbox or Git).
+    /// "View", "Sort by", "Group by" and "Customize this folder" belong to Explorer's own window and are not
+    /// handed out to other programs; Skimmer's own items go on top instead.
+    /// </summary>
+    public static void ShowBackground(Control owner, string folder, Point screen, IReadOnlyList<Item> ownItems)
+    {
+        IntPtr pidl = IntPtr.Zero, desktopPtr = IntPtr.Zero, folderPtr = IntPtr.Zero, menuPtr = IntPtr.Zero;
+        IContextMenu cm = null;
+        try
+        {
+            if (SHParseDisplayName(folder, IntPtr.Zero, out pidl, 0, out _) != 0 || pidl == IntPtr.Zero
+                || SHGetDesktopFolder(out desktopPtr) != 0)
+            {
+                ShowOwnOnly(owner, screen, ownItems);
+                return;
+            }
+            var desktop = (IShellFolder)Marshal.GetObjectForIUnknown(desktopPtr);
+            Guid iidFolder = typeof(IShellFolder).GUID;
+            desktop.BindToObject(pidl, IntPtr.Zero, ref iidFolder, out folderPtr);
+            var shellFolder = (IShellFolder)Marshal.GetObjectForIUnknown(folderPtr);
+
+            Guid iidMenu = typeof(IContextMenu).GUID;
+            shellFolder.CreateViewObject(owner.Handle, ref iidMenu, out menuPtr);
+            cm = (IContextMenu)Marshal.GetObjectForIUnknown(menuPtr);
+            Track(owner, cm, screen, ownItems);
+        }
         catch
         {
-            // shell extensions can fail in many ways; never take the app down because of them
+            try { ShowOwnOnly(owner, screen, ownItems); } catch { }
         }
         finally
         {
-            if (hmenu != IntPtr.Zero) DestroyMenu(hmenu);
             if (cm != null) Marshal.ReleaseComObject(cm);
             if (menuPtr != IntPtr.Zero) Marshal.Release(menuPtr);
-            if (parentPtr != IntPtr.Zero) Marshal.Release(parentPtr);
-            foreach (var p in absolute) Marshal.FreeCoTaskMem(p);
+            if (folderPtr != IntPtr.Zero) Marshal.Release(folderPtr);
+            if (desktopPtr != IntPtr.Zero) Marshal.Release(desktopPtr);
+            if (pidl != IntPtr.Zero) Marshal.FreeCoTaskMem(pidl);
         }
     }
 
@@ -234,6 +285,9 @@ static class ShellContextMenu
 
     [DllImport("shell32.dll")]
     static extern int SHBindToParent(IntPtr pidl, ref Guid riid, out IntPtr ppv, out IntPtr ppidlLast);
+
+    [DllImport("shell32.dll")]
+    static extern int SHGetDesktopFolder(out IntPtr ppshf);
 
     [DllImport("user32.dll")]
     static extern IntPtr CreatePopupMenu();
