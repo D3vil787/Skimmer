@@ -102,14 +102,23 @@ sealed class UpdateBanner : Panel, IThemeAware
         Info = null;
     }
 
+    /// <summary>Main button of the strip: the accent darkened toward the brand-book ink (#0B0D12).</summary>
+    public static Color UpdateButtonFill(Color accent) => ThemeDraw.Blend(accent, UiStyle.Ink, 0.22f);
+
     public void ApplyTheme()
     {
         var p = ThemeService.Palette;
         Color fill = p.Accent;
         Color fore = UiStyle.OnAccent(fill);
 
+        // every child sits on the accent: the generic theme pass paints labels with the panel colour
         BackColor = fill;
-        foreach (Control c in Controls) c.BackColor = fill;
+        foreach (Control c in Controls)
+        {
+            c.BackColor = fill;
+            foreach (Control cc in c.Controls) cc.BackColor = fill;
+        }
+
         text.ForeColor = fore;
         text.Font = UiTheme.Default;
         whatsNew.Font = UiTheme.Default;
@@ -117,25 +126,29 @@ sealed class UpdateBanner : Panel, IThemeAware
         whatsNew.ActiveLinkColor = fore;
         whatsNew.VisitedLinkColor = fore;
 
-        // "Update": inverted (text-coloured fill, accent text) - the main action on the strip.
-        btnUpdate.Font = UiTheme.Default;
-        btnUpdate.BackColor = fore;
-        btnUpdate.ForeColor = fill;
-        btnUpdate.FlatAppearance.BorderColor = fore;
-        btnUpdate.FlatAppearance.BorderSize = 1;
-        btnUpdate.FlatAppearance.MouseOverBackColor = ThemeDraw.Blend(fore, fill, 0.15f);
-        btnUpdate.FlatAppearance.MouseDownBackColor = ThemeDraw.Blend(fore, fill, 0.3f);
+        // "Update": darker shade of the accent, text by contrast, no border
+        Color main = UpdateButtonFill(fill);
+        btnUpdate.Font = UiTheme.Medium;
+        btnUpdate.BackColor = main;
+        btnUpdate.ForeColor = UiStyle.OnAccent(main);
+        btnUpdate.FlatAppearance.BorderSize = 0;
+        btnUpdate.FlatAppearance.BorderColor = main;
+        btnUpdate.FlatAppearance.MouseOverBackColor = ThemeDraw.Blend(main, UiStyle.Ink, 0.12f);
+        btnUpdate.FlatAppearance.MouseDownBackColor = ThemeDraw.Blend(main, UiStyle.Ink, 0.24f);
 
+        // "Later": outline in a softened text colour; "×": text only
+        btnLater.Font = UiTheme.Default;
+        btnLater.FlatAppearance.BorderSize = 1;
+        btnLater.FlatAppearance.BorderColor = ThemeDraw.Blend(fill, fore, 0.45f);
         foreach (var b in new[] { btnLater, btnClose })
         {
-            if (b == btnLater) b.Font = UiTheme.Default;
             b.BackColor = fill;
             b.ForeColor = fore;
-            b.FlatAppearance.BorderColor = b == btnLater ? fore : fill;
-            b.FlatAppearance.BorderSize = b == btnLater ? 1 : 0;
-            b.FlatAppearance.MouseOverBackColor = ThemeDraw.Blend(fill, fore, 0.15f);
-            b.FlatAppearance.MouseDownBackColor = ThemeDraw.Blend(fill, fore, 0.3f);
+            b.FlatAppearance.MouseOverBackColor = ThemeDraw.Blend(fill, UiStyle.Ink, 0.12f);
+            b.FlatAppearance.MouseDownBackColor = ThemeDraw.Blend(fill, UiStyle.Ink, 0.24f);
         }
+        btnClose.FlatAppearance.BorderSize = 0;
+        btnClose.FlatAppearance.BorderColor = fill;
         Invalidate(true);
     }
 }

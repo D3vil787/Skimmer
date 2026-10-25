@@ -24,6 +24,27 @@ public class SkimmerThemeTests
         }
     }
 
+    /// <summary>Update banner: its text and the "Update" button must read well with every accent in both themes.</summary>
+    [Fact]
+    public void UpdateBanner_IsReadableWithEveryAccent()
+    {
+        foreach (ThemeDefinition theme in ThemeCatalog.All)
+        {
+            var accents = ThemeCatalog.AccentOptions
+                .Select(o => ThemeService.ResolveAccent(theme, ThemeService.ToHex(o.Color)))
+                .Append(theme.DefaultAccent);
+            foreach (Color accent in accents)
+            {
+                double text = ThemeContrast.ContrastRatio(UiStyle.OnAccent(accent), accent);
+                Assert.True(text >= TextContrast, $"{theme.Id}: banner text on {ThemeService.ToHex(accent)} {text:0.00}:1");
+
+                Color button = UpdateBanner.UpdateButtonFill(accent);
+                double label = ThemeContrast.ContrastRatio(UiStyle.OnAccent(button), button);
+                Assert.True(label >= TextContrast, $"{theme.Id}: Update button on {ThemeService.ToHex(accent)} {label:0.00}:1");
+            }
+        }
+    }
+
     /// <summary>Selected thumbnail tile = 22 % accent over the card colour: file names must stay readable with every accent.</summary>
     [Fact]
     public void SelectedTileName_IsReadableWithEveryAccent()
