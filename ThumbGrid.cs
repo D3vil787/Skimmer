@@ -36,6 +36,7 @@ sealed class ThumbGrid : Control, IThemeAware
     public event Action<int> ItemActivated;
     public event Action SelectionChanged;
     public event Action<int, Point> ItemContext;
+    public event Action<Point> BackgroundContext;   // right click on the empty part of the grid
     public event Action<bool> DeleteRequested;   // true = permanent (Shift+Del)
 
     public ThumbGrid()
@@ -558,8 +559,34 @@ sealed class ThumbGrid : Control, IThemeAware
             focus = i;
             Invalidate();
             SelectionChanged?.Invoke();
-            ItemContext?.Invoke(i, PointToScreen(e.Location));
         }
+    }
+
+    /// <summary>Windows opens context menus when the right button is released, not pressed.</summary>
+    protected override void OnMouseUp(MouseEventArgs e)
+    {
+        base.OnMouseUp(e);
+        if (e.Button != MouseButtons.Right || session == null) return;
+        int i = HitTest(e.Location);
+        if (i >= 0) ItemContext?.Invoke(i, PointToScreen(e.Location));
+        else BackgroundContext?.Invoke(PointToScreen(e.Location));
+    }
+
+    /// <summary>Menu key / Shift+F10: menu for the focused tile, shown at its centre.</summary>
+    void ContextFromKeyboard()
+    {
+        if (session == null || focus < 0 || focus >= session.ItemCount || cols < 1) return;
+        EnsureVisible(focus);
+        int x = offX + (focus % cols) * cellW + cellW / 2;
+        int y = (focus / cols) * cellH - scroll + cellH / 2;
+        ItemContext?.Invoke(focus, PointToScreen(new Point(x, y)));
+    }
+
+    protected override void WndProc(ref Message m)
+    {
+        // owner-drawn submenus of the Explorer menu ("Open with", "Send to") are drawn by the shell
+        if (ShellContextMenu.HandleMenuMessage(ref m)) return;
+        base.WndProc(ref m);
     }
 
     protected override void OnMouseDoubleClick(MouseEventArgs e)
@@ -596,6 +623,14 @@ sealed class ThumbGrid : Control, IThemeAware
         int cur = focus < 0 ? 0 : focus;
         int pageRows = Math.Max(1, ClientSize.Height / cellH - 1);
         int next;
+
+        if (e.KeyCode == Keys.Apps || (e.KeyCode == Keys.F10 && e.Shift))
+        {
+            ContextFromKeyboard();
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+            return;
+        }
 
         switch (e.KeyCode)
         {
