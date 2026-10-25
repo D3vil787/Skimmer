@@ -362,6 +362,12 @@ sealed class MainForm : Form, IThemeAware
         ThemeService.Apply(ctx);
     }
 
+    void SetState(string text)
+    {
+        stState.Text = text;
+        stateFromTimer = false;
+    }
+
     static void OpenUrl(string url)
     {
         if (string.IsNullOrEmpty(url)) return;
