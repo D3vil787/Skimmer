@@ -327,6 +327,10 @@ sealed class ViewerForm : Form
             case Keys.Home: Go(-1, 1); return true;
             case Keys.End: Go(session.Files.Length, -1); return true;
             case Keys.Delete: DeleteCurrent(false); return true;
+            case Keys.Apps:
+            case Keys.Shift | Keys.F10:
+                ShowShellMenu(PointToScreen(new Point(ClientSize.Width / 2, ClientSize.Height / 2)));
+                return true;
             case Keys.Shift | Keys.Delete: DeleteCurrent(true); return true;
             case Keys.Z: ToggleZoom(); return true;
             case Keys.I:
@@ -353,6 +357,43 @@ sealed class ViewerForm : Form
         if (e.Button == MouseButtons.Left) Close();
     }
 
+    /// <summary>Right click: the Explorer menu for the photo on screen (Open with, Print, Properties...).</summary>
+    protected override void OnMouseUp(MouseEventArgs e)
+    {
+        base.OnMouseUp(e);
+        dragging = false;
+        if (e.Button != MouseButtons.Right) return;
+        ShowShellMenu(PointToScreen(e.Location));
+    }
+
+    void ShowShellMenu(Point screen)
+    {
+        if (index < 0 || index >= session.Files.Length || removed.Contains(index)) return;
+        string path = session.Files[index].FullPath;
+        var own = new List<ShellContextMenu.Item>
+        {
+            new(Lang.Get("viewer.close"), Close, Bold: true),
+            new(Lang.Get("ctx.copypath"), () => { try { Clipboard.SetText(path); } catch { } }),
+        };
+        ShellContextMenu.Show(this, new[] { path }, screen, own);
+
+        // the file may have been deleted or renamed from the menu
+        if (!File.Exists(path))
+        {
+            removed.Add(index);
+            if (cache.Remove(index, out var li)) li.Bmp.Dispose();
+            int j = Step(index, 1);
+            if (j < 0) j = Step(index, -1);
+            if (j < 0) Close(); else ShowImage(j);
+        }
+    }
+
+    protected override void WndProc(ref Message m)
+    {
+        if (ShellContextMenu.HandleMenuMessage(ref m)) return;
+        base.WndProc(ref m);
+    }
+
     protected override void OnMouseDown(MouseEventArgs e)
     {
         base.OnMouseDown(e);
@@ -375,11 +416,6 @@ sealed class ViewerForm : Form
         Invalidate();
     }
 
-    protected override void OnMouseUp(MouseEventArgs e)
-    {
-        base.OnMouseUp(e);
-        dragging = false;
-    }
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {

@@ -35,7 +35,7 @@ Supported formats: JPEG, PNG, BMP, GIF, TIFF, ICO, JPEG XR and – if the corres
 | Grid | `Enter`, double click | open photo / open folder |
 | Grid | Ctrl+click, Shift+click, `Shift`+arrows, `Ctrl+A` | multiple selection |
 | Grid | `Del` / `Shift+Del` | to Recycle Bin / delete permanently (asks, "No" by default) |
-| Grid | right click | open / show in Explorer / copy path / copy file |
+| Grid | right click, `Menu`, `Shift+F10` | the standard Explorer menu (Open with, Send to, Copy, Properties…) plus *View in Skimmer* and *Copy path* |
 | Anywhere | `F5` | refresh folder |
 | Anywhere | `Alt+←` / `Alt+→` / `Alt+↑` | back / forward / up |
 | Anywhere | `Ctrl+L` | focus address bar |
@@ -44,6 +44,7 @@ Supported formats: JPEG, PNG, BMP, GIF, TIFF, ICO, JPEG XR and – if the corres
 | Viewer | `Home` / `End` | first / last photo |
 | Viewer | `Z` or middle click | toggle 100 % (drag to pan) |
 | Viewer | `I` | toggle info bar |
+| Viewer | right click, `Menu` | the Explorer menu for the photo on screen |
 | Viewer | `Del` / `Shift+Del` | delete the current photo and go to the next one |
 | Viewer | `Esc`, `Enter`, double click | close |
 

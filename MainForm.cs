@@ -257,6 +257,7 @@ sealed class MainForm : Form, IThemeAware
         grid.ItemActivated += OnItemActivated;
         grid.SelectionChanged += OnSelectionChanged;
         grid.ItemContext += ShowItemMenu;
+        grid.BackgroundContext += ShowBackgroundMenu;
         grid.DeleteRequested += DeleteSelected;
 
         // ---- split
@@ -346,38 +347,19 @@ sealed class MainForm : Form, IThemeAware
         return il;
     }
 
+    /// <summary>Menu for the empty part of the grid (the item menu is Explorer's own, see ShowItemMenu).</summary>
     void BuildContextMenu()
     {
-        var open = new ToolStripMenuItem(Lang.Get("ctx.open"));
-        open.Click += (_, _) => { if (ctxIndex >= 0) OnItemActivated(ctxIndex); };
-        var explorer = new ToolStripMenuItem(Lang.Get("ctx.explorer"));
-        explorer.Click += (_, _) => ShowInExplorer(ctxIndex);
-        var copyPath = new ToolStripMenuItem(Lang.Get("ctx.copypath"));
-        copyPath.Click += (_, _) => CopyPaths();
-        var copyFile = new ToolStripMenuItem(Lang.Get("ctx.copyfile"));
-        copyFile.Click += (_, _) => CopyFiles();
-        var delete = new ToolStripMenuItem(Lang.Get("ctx.delete")) { ShortcutKeyDisplayString = "Del" };
-        delete.Click += (_, _) => DeleteSelected(false);
         var refresh = new ToolStripMenuItem(Lang.Get("ctx.refresh")) { ShortcutKeyDisplayString = "F5" };
         refresh.Click += (_, _) => Reload();
-
-        ctx.Items.AddRange(new ToolStripItem[]
+        var explorer = new ToolStripMenuItem(Lang.Get("ctx.folderexplorer"));
+        explorer.Click += (_, _) =>
         {
-            open, new ToolStripSeparator(), explorer, copyPath, copyFile, new ToolStripSeparator(),
-            delete, new ToolStripSeparator(), refresh
-        });
-        ctx.Opening += (_, _) =>
-        {
-            var s = session;
-            delete.Enabled = s != null && grid.SelectedIndices.Any(g => !s.IsFolder(g));
+            if (currentPath == null) return;
+            try { Process.Start(new ProcessStartInfo("explorer.exe", $"\"{currentPath}\"") { UseShellExecute = true }); } catch { }
         };
+        ctx.Items.AddRange(new ToolStripItem[] { refresh, new ToolStripSeparator(), explorer });
         ThemeService.Apply(ctx);
-    }
-
-    void SetState(string text)
-    {
-        stState.Text = text;
-        stateFromTimer = false;
     }
 
     static void OpenUrl(string url)
@@ -686,9 +668,32 @@ sealed class MainForm : Form, IThemeAware
         stInfo.Text = prefix + $"{f.Name}   ·   {Fmt.Size(f.Size)}   ·   {Fmt.Date(f.Modified)}";
     }
 
+    /// <summary>
+    /// Right click on a tile: the standard Explorer menu (Open with, Send to, Copy, Delete, Properties...)
+    /// for the whole selection, with Skimmer's own "View" and "Copy path" on top.
+    /// Deletes and renames made from it show up by themselves through the folder watcher.
+    /// </summary>
     void ShowItemMenu(int index, Point screenPos)
     {
+        var s = session;
+        if (s == null || index < 0 || index >= s.ItemCount) return;
         ctxIndex = index;
+        var paths = SelectedPaths();
+        if (paths.Count == 0) paths.Add(s.ItemPath(index));
+
+        bool folder = s.IsFolder(index);
+        var own = new List<ShellContextMenu.Item>
+        {
+            new(Lang.Get(folder ? "ctx.openfolder" : "ctx.view"), () => OnItemActivated(index), Bold: true),
+            new(Lang.Get("ctx.copypath"), CopyPaths),
+        };
+        ShellContextMenu.Show(grid, paths, screenPos, own);
+    }
+
+    void ShowBackgroundMenu(Point screenPos)
+    {
+        if (currentPath == null) return;
+        ThemeService.Apply(ctx);
         ctx.Show(screenPos);
     }
 
@@ -699,32 +704,11 @@ sealed class MainForm : Form, IThemeAware
         return grid.SelectedIndices.Where(g => g >= 0 && g < s.ItemCount).Select(s.ItemPath).ToList();
     }
 
-    void ShowInExplorer(int g)
-    {
-        var s = session;
-        if (s == null || g < 0 || g >= s.ItemCount) return;
-        string p = s.ItemPath(g);
-        try { Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{p}\"") { UseShellExecute = true }); } catch { }
-    }
-
     void CopyPaths()
     {
         var paths = SelectedPaths();
         if (paths.Count == 0) return;
         try { Clipboard.SetText(string.Join(Environment.NewLine, paths)); } catch { }
-    }
-
-    void CopyFiles()
-    {
-        var paths = SelectedPaths();
-        if (paths.Count == 0) return;
-        try
-        {
-            var sc = new System.Collections.Specialized.StringCollection();
-            sc.AddRange(paths.ToArray());
-            Clipboard.SetFileDropList(sc);
-        }
-        catch { }
     }
 
     /// <summary>Del = Recycle Bin, Shift+Del = permanently (Windows asks). Folders in the selection are ignored.</summary>
