@@ -51,10 +51,13 @@ static class UiStyle
     }
 
     /// <summary>Text colour on an accent fill: white or near-black, whichever reads better (brand book: "Палитра").</summary>
+    /// <summary>Near-black text for light accent fills (brand book: "почти чёрный #0B0D12").</summary>
+    public static readonly Color Ink = ColorTranslator.FromHtml("#0B0D12");
+
     public static Color OnAccent(Color accent)
     {
         Color light = Color.White;
-        Color dark = ColorTranslator.FromHtml("#0B0D12");
+        Color dark = Ink;
         return ThemeContrast.ContrastRatio(light, accent) >= ThemeContrast.ContrastRatio(dark, accent) ? light : dark;
     }
 
