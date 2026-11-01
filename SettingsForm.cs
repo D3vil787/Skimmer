@@ -10,10 +10,18 @@ namespace Skimmer;
 /// small muted hints under fields, OK / Cancel at the bottom right (Enter / Esc).
 /// Theme, accent and density apply immediately and are rolled back on Cancel;
 /// the language changes on the next start.
+/// The height follows the content but never exceeds the screen's working area: on a short screen
+/// (laptop, 125-150 % scaling) the groups scroll while OK / Cancel stay at the bottom.
 /// </summary>
 sealed class SettingsForm : Form, IThemeAware
 {
     const int ContentWidth = 532;   // 560 - 2 x 14 padding
+    const int WindowWidth = ContentWidth + 2 * EdgePadding;
+    const int EdgePadding = 14;
+    const int ScreenMargin = 16;    // minimal gap between the window and the screen edges
+    const int MinWindowWidth = 320;
+    const int MinWindowHeight = 240;
+    const int InitialHeight = 640;  // replaced by the real height in OnLoad
 
     readonly Action clearCache;
     readonly Func<Task<UpdateInfo>> checkUpdates;
@@ -33,6 +41,32 @@ sealed class SettingsForm : Form, IThemeAware
     readonly ComboBox cmbLang = new();
     readonly FlowLayoutPanel swatches = new();
     readonly ToolTip tips = new();
+
+    /// <summary>The groups above the buttons; it scrolls when the screen is too short for all of them.</summary>
+    readonly TableLayoutPanel content = new()
+    {
+        AutoSize = true,
+        AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        ColumnCount = 1,
+        Padding = new Padding(EdgePadding),
+        MinimumSize = new Size(WindowWidth, 0),
+        MaximumSize = new Size(WindowWidth, 0),
+        Location = Point.Empty
+    };
+
+    readonly Panel scroll = new() { Dock = DockStyle.Fill, AutoScroll = true, Margin = Padding.Empty };
+
+    /// <summary>OK / Cancel: outside the scrolling area, so they stay visible on any screen.</summary>
+    readonly FlowLayoutPanel footer = new()
+    {
+        FlowDirection = FlowDirection.RightToLeft,
+        AutoSize = true,
+        AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        Dock = DockStyle.Fill,
+        WrapContents = false,
+        Margin = Padding.Empty,
+        Padding = new Padding(0, 8, EdgePadding, 10)
+    };
     Button btnCheck;
     bool loading = true;
 
@@ -53,25 +87,14 @@ sealed class SettingsForm : Form, IThemeAware
         MinimizeBox = false;
         ShowInTaskbar = false;
         StartPosition = FormStartPosition.CenterParent;
-        AutoSize = true;
-        AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        ClientSize = new Size(WindowWidth, InitialHeight);   // fitted to the screen in OnLoad
 
-        var root = new TableLayoutPanel
-        {
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            ColumnCount = 1,
-            Padding = new Padding(14),
-            MinimumSize = new Size(560, 0),
-            MaximumSize = new Size(560, 0),
-            Dock = DockStyle.Fill
-        };
-        root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
-        root.Controls.Add(UiStyle.Label(Lang.Get("set.title"), UiRole.Title));
+        content.Controls.Add(UiStyle.Label(Lang.Get("set.title"), UiRole.Title));
 
         // ---------------- 1. program-specific: background indexing
-        var gIdx = Section(root, Lang.Get("set.group.indexing"));
+        var gIdx = Section(content, Lang.Get("set.group.indexing"));
         chkBg.Text = Lang.Get("set.bg.enable");
         chkBg.AutoSize = true;
         chkBg.Checked = s.BackgroundIndexing;
@@ -102,7 +125,7 @@ sealed class SettingsForm : Form, IThemeAware
         Span(gIdx, UiStyle.Hint(Lang.Get("set.bg.hint"), ContentWidth));
 
         // ---------------- 2. data and cache
-        var gData = Section(root, Lang.Get("set.group.data"));
+        var gData = Section(content, Lang.Get("set.group.data"));
         var lblPath = UiStyle.Role(new Label
         {
             Text = AppPaths.CacheDir,
@@ -134,7 +157,7 @@ sealed class SettingsForm : Form, IThemeAware
         Span(gData, cacheButtons);
 
         // ---------------- 3. updates
-        var gUpd = Section(root, Lang.Get("set.group.updates"));
+        var gUpd = Section(content, Lang.Get("set.group.updates"));
         chkUpd.Text = Lang.Get("set.upd.auto");
         chkUpd.AutoSize = true;
         chkUpd.Checked = s.AutoUpdateCheck;
@@ -151,7 +174,7 @@ sealed class SettingsForm : Form, IThemeAware
         Span(gUpd, UiStyle.Hint(Lang.Get("set.upd.hint"), ContentWidth));
 
         // ---------------- 4. appearance: theme, accent, density, language
-        var gLook = Section(root, Lang.Get("set.group.appearance"));
+        var gLook = Section(content, Lang.Get("set.group.appearance"));
         Combo(cmbTheme, Lang.Get(ThemeCatalog.Get(ThemeCatalog.FluentLightId).NameKey),
                         Lang.Get(ThemeCatalog.Get(ThemeCatalog.GraphiteDarkId).NameKey),
                         Lang.Get(ThemeCatalog.SystemNameKey));
@@ -178,28 +201,111 @@ sealed class SettingsForm : Form, IThemeAware
         Field(gLook, Lang.Get("set.lang"), cmbLang);
         Span(gLook, UiStyle.Hint(Lang.Get("set.lang.hint"), ContentWidth));
 
-        // ---------------- OK / Cancel (bottom right)
+        // ---------------- OK / Cancel (bottom right, always visible)
         var ok = UiStyle.Button(Lang.Get("ok"), (_, _) => Apply(), primary: true);
         ok.DialogResult = DialogResult.OK;
         var cancel = UiStyle.Button(Lang.Get("cancel"));
         cancel.DialogResult = DialogResult.Cancel;
-        var buttons = new FlowLayoutPanel
-        {
-            FlowDirection = FlowDirection.RightToLeft,
-            AutoSize = true,
-            Dock = DockStyle.Fill,
-            WrapContents = false,
-            Margin = new Padding(0, 14, 0, 0)
-        };
-        buttons.Controls.Add(cancel);
-        buttons.Controls.Add(ok);
-        root.Controls.Add(buttons);
+        footer.Controls.Add(cancel);
+        footer.Controls.Add(ok);
         AcceptButton = ok;
         CancelButton = cancel;
 
-        Controls.Add(root);
+        // groups scroll, buttons are pinned below them
+        scroll.Controls.Add(content);
+        var shell = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 2,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty
+        };
+        shell.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        shell.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        shell.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        shell.Controls.Add(scroll, 0, 0);
+        shell.Controls.Add(footer, 0, 1);
+
+        Controls.Add(shell);
         loading = false;
         UiStyle.Attach(this);
+
+        MouseWheel += ScrollGroups;
+        HookWheel(this);
+    }
+
+    // ------------------------------------------------------------ size on this screen
+
+    protected override void OnLoad(EventArgs e)
+    {
+        base.OnLoad(e);   // the DPI scaling of the controls has already been applied
+        FitToWorkingArea(Screen.FromControl(Owner ?? this).WorkingArea);
+    }
+
+    protected override void OnDpiChanged(DpiChangedEventArgs e)
+    {
+        base.OnDpiChanged(e);
+        // the suggested rectangle is already on the monitor the dialog is moving to
+        FitToWorkingArea(Screen.FromRectangle(e.SuggestedRectangle).WorkingArea);
+    }
+
+    /// <summary>
+    /// The panel scrolls on the wheel only when it has the focus, and the pointer usually rests on
+    /// a label or a group. Fields that use the wheel themselves (list, numbers, list boxes) are skipped.
+    /// </summary>
+    void HookWheel(Control root)
+    {
+        foreach (Control c in root.Controls)
+        {
+            if (c is ListBox or NumericUpDown or ComboBox or TextBoxBase) continue;
+            c.MouseWheel += ScrollGroups;
+            HookWheel(c);
+        }
+    }
+
+    void ScrollGroups(object sender, MouseEventArgs e)
+    {
+        if (e.Delta == 0 || !scroll.VerticalScroll.Visible) return;
+        Point pos = scroll.AutoScrollPosition;
+        int max = Math.Max(0, scroll.VerticalScroll.Maximum - scroll.VerticalScroll.LargeChange + 1);
+        int y = Math.Clamp(-pos.Y - e.Delta, 0, max);
+        scroll.AutoScrollPosition = new Point(-pos.X, y);
+        if (e is HandledMouseEventArgs handled) handled.Handled = true;
+    }
+
+    /// <summary>
+    /// Window height follows the content, but never exceeds the screen's working area: on a short
+    /// screen the groups scroll and OK / Cancel stay at the bottom. The dialog keeps the brand-book
+    /// width plus a gutter for the scrollbar, so the groups are not squeezed by it.
+    /// </summary>
+    internal void FitToWorkingArea(Rectangle workingArea)
+    {
+        int margin = LogicalToDeviceUnits(ScreenMargin);
+        int frameW = Math.Max(0, Width - ClientSize.Width);
+        int frameH = Math.Max(0, Height - ClientSize.Height);
+        int maxW = Math.Max(LogicalToDeviceUnits(MinWindowWidth), workingArea.Width - frameW - 2 * margin);
+        int maxH = Math.Max(LogicalToDeviceUnits(MinWindowHeight), workingArea.Height - frameH - 2 * margin);
+
+        content.PerformLayout();
+        Size groups = content.GetPreferredSize(new Size(LogicalToDeviceUnits(WindowWidth), 0));
+        int buttons = footer.GetPreferredSize(new Size(groups.Width, 0)).Height;
+
+        int width = Math.Min(groups.Width, maxW);
+        int height = Math.Min(groups.Height + buttons, maxH);
+        ClientSize = new Size(width, height);
+        scroll.PerformLayout();
+
+        // the vertical scrollbar takes width from the viewport: give it its own gutter instead
+        bool needsScroll = groups.Height + buttons > height || scroll.VerticalScroll.Visible;
+        int gutter = needsScroll ? SystemInformation.VerticalScrollBarWidth : 0;
+        if (width + gutter > maxW) gutter = 0;   // there is no room for the gutter: the groups scroll sideways
+        if (gutter > 0)
+        {
+            ClientSize = new Size(width + gutter, height);
+            scroll.PerformLayout();
+        }
+        footer.Padding = new Padding(0, footer.Padding.Top, LogicalToDeviceUnits(EdgePadding) + gutter, footer.Padding.Bottom);
     }
 
     // ------------------------------------------------------------ layout helpers
