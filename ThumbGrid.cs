@@ -8,17 +8,21 @@ namespace Skimmer;
 /// Owner-drawn, fully virtual thumbnail grid. Only the tiles on screen are painted,
 /// so a folder with tens of thousands of photos costs nothing extra.
 /// Items: subfolders first, then images (see FolderSession). Explorer-style selection:
-/// click, Ctrl+click, Shift+click, Shift+arrows, Ctrl+A.
+/// click, Ctrl+click, Shift+click, Shift+arrows, Ctrl+A and the rubber band
+/// (left-drag over the empty space: everything the rectangle touches is selected).
 /// </summary>
 sealed class ThumbGrid : Control, IThemeAware
 {
     sealed class LruItem { public int Index; public Bitmap Bmp; }
+
+    enum BandMode { Replace, Add, Toggle }
 
     const int LruCapacity = 1500;
     const int PrefetchRows = 3;
 
     readonly VScrollBar vsb;
     readonly System.Windows.Forms.Timer pump;
+    readonly System.Windows.Forms.Timer bandTimer;
     readonly LinkedList<LruItem> lruList = new();
     readonly Dictionary<int, LinkedListNode<LruItem>> lru = new();
     readonly HashSet<int> failed = new();
@@ -32,6 +36,14 @@ sealed class ThumbGrid : Control, IThemeAware
     int focus = -1;      // "current" item (keyboard focus)
     int anchor = -1;     // start of Shift-range
     bool updatingScroll;
+
+    // rubber band (drag selection): origin is kept in content coordinates, so the band
+    // stays glued to the tiles while the grid auto-scrolls under a held mouse button
+    bool banding;
+    BandMode bandMode;
+    Point bandPointer;   // last mouse position, client coordinates (may lie outside the grid)
+    Point bandOrigin;    // where the drag started, content coordinates
+    HashSet<int> bandBase;   // selection at the start of the drag (Shift / Ctrl)
 
     public event Action<int> ItemActivated;
     public event Action SelectionChanged;
@@ -58,6 +70,10 @@ sealed class ThumbGrid : Control, IThemeAware
         pump = new System.Windows.Forms.Timer { Interval = 30 };
         pump.Tick += (s, e) => DrainResults();
         pump.Start();
+
+        // keeps scrolling while the rubber band is dragged past the top/bottom edge
+        bandTimer = new System.Windows.Forms.Timer { Interval = 30 };
+        bandTimer.Tick += (s, e) => ScrollBand();
     }
 
     protected override void OnHandleCreated(EventArgs e)
@@ -112,6 +128,7 @@ sealed class ThumbGrid : Control, IThemeAware
 
     public void SetSession(FolderSession s)
     {
+        EndBand();
         ClearCache();
         session = s;
         selection.Clear();
@@ -145,6 +162,7 @@ sealed class ThumbGrid : Control, IThemeAware
     /// </summary>
     public void SwapSession(FolderSession ns, string preferFocusName = null)
     {
+        EndBand();
         var old = session;
         if (old == null || ns == null)
         {
@@ -238,6 +256,141 @@ sealed class ThumbGrid : Control, IThemeAware
         if (!add) selection.Clear();
         int a = Math.Min(from, to), b = Math.Max(from, to);
         for (int i = a; i <= b; i++) selection.Add(i);
+    }
+
+    // ------------------------------------------------------------ rubber band
+
+    void BeginBand(Point p, BandMode mode)
+    {
+        banding = true;
+        bandMode = mode;
+        bandPointer = p;
+        bandOrigin = new Point(p.X, p.Y + scroll);
+        bandBase = mode == BandMode.Replace ? null : new HashSet<int>(selection);
+        Capture = true;
+        bandTimer.Start();
+    }
+
+    void EndBand()
+    {
+        if (!banding && bandBase == null) return;
+        banding = false;
+        bandBase = null;
+        bandTimer.Stop();
+        if (Capture) Capture = false;
+        Invalidate();
+    }
+
+    /// <summary>
+    /// The band in content coordinates, so it does not move when the grid scrolls.
+    /// The right/bottom edges are inclusive: a perfectly vertical or horizontal drag
+    /// is still a one-pixel-wide strip that selects what it touches.
+    /// </summary>
+    Rectangle BandContentRect()
+    {
+        int x1 = bandOrigin.X, y1 = bandOrigin.Y;
+        int x2 = bandPointer.X, y2 = bandPointer.Y + scroll;
+        return Rectangle.FromLTRB(Math.Min(x1, x2), Math.Min(y1, y2), Math.Max(x1, x2) + 1, Math.Max(y1, y2) + 1);
+    }
+
+    /// <summary>The band clipped to the visible grid area, ready to be painted.</summary>
+    Rectangle BandClientRect()
+    {
+        var r = BandContentRect();
+        r.Offset(0, -scroll);
+        var view = new Rectangle(0, 0, Math.Max(1, ClientSize.Width - vsb.Width), ClientSize.Height);
+        return Rectangle.Intersect(r, view);
+    }
+
+    /// <summary>Grid indices whose cells intersect the band; only the rows/columns it covers are visited.</summary>
+    List<int> BandHits(Rectangle content)
+        => BandHits(content, Count, cols, cellW, cellH, offX, total, ClientSize.Width - vsb.Width);
+
+    /// <summary>
+    /// Pure geometry behind <see cref="BandHits(Rectangle)"/>: kept static so the
+    /// virtual-grid maths can be tested without a window.
+    /// </summary>
+    internal static List<int> BandHits(Rectangle content, int count, int cols, int cellW, int cellH,
+                                       int offX, int contentHeight, int viewWidth)
+    {
+        var hits = new List<int>();
+        if (count <= 0 || cols <= 0 || cellW <= 0 || cellH <= 0) return hits;
+
+        var r = Rectangle.Intersect(content, new Rectangle(0, 0, Math.Max(1, viewWidth), contentHeight));
+        if (r.Width <= 0 || r.Height <= 0) return hits;
+
+        int firstRow = Math.Max(0, r.Top / cellH);
+        int lastRow = Math.Min((count + cols - 1) / cols - 1, (r.Bottom - 1) / cellH);
+        int firstCol = Math.Max(0, (r.Left - offX) / cellW);
+        int lastCol = Math.Min(cols - 1, (r.Right - 1 - offX) / cellW);
+
+        for (int row = firstRow; row <= lastRow; row++)
+            for (int col = firstCol; col <= lastCol; col++)
+            {
+                int i = row * cols + col;
+                if (i >= count) break;
+                var cell = new Rectangle(offX + col * cellW, row * cellH, cellW, cellH);
+                if (cell.IntersectsWith(r)) hits.Add(i);
+            }
+        return hits;
+    }
+
+    void UpdateBand()
+    {
+        if (session == null) return;
+        var hits = BandHits(BandContentRect());
+
+        // Shift adds to what was selected, Ctrl toggles (relative to the start of the drag),
+        // plain drag replaces — exactly like Explorer
+        var next = bandMode == BandMode.Replace ? new HashSet<int>() : new HashSet<int>(bandBase);
+        foreach (int i in hits)
+        {
+            if (bandMode == BandMode.Toggle)
+            {
+                if (!next.Remove(i)) next.Add(i);
+            }
+            else next.Add(i);
+        }
+
+        int newFocus = focus;
+        if (hits.Count > 0)
+        {
+            newFocus = hits[0];
+            foreach (int i in hits)
+                if (next.Contains(i)) { newFocus = i; break; }
+            anchor = newFocus;
+        }
+
+        bool changed = !next.SetEquals(selection);
+        if (changed)
+        {
+            selection.Clear();
+            foreach (int i in next) selection.Add(i);
+        }
+        if (changed || newFocus != focus)
+        {
+            focus = newFocus;
+            SelectionChanged?.Invoke();
+        }
+        Invalidate();
+    }
+
+    /// <summary>Auto-scroll while the pointer is held above or below the viewport.</summary>
+    void ScrollBand()
+    {
+        if (!banding) return;
+        int y = bandPointer.Y;
+        int h = ClientSize.Height;
+        int step = Math.Max(8, cellH / 3);
+        int rows = Math.Max(1, cellH);
+        int delta;
+        if (y < 0) delta = -step * Math.Min(4, 1 + (-y - 1) / rows);
+        else if (y >= h) delta = step * Math.Min(4, 1 + (y - h) / rows);
+        else return;
+
+        int before = scroll;
+        SetScroll(scroll + delta);
+        if (scroll != before) UpdateBand();
     }
 
     // ------------------------------------------------------------ layout
@@ -433,6 +586,20 @@ sealed class ThumbGrid : Control, IThemeAware
                 ThemeDraw.DrawRounded(g, Rectangle.Inflate(cell, -1, -1), radius, pal.Accent, 2f);
         }
 
+        // the rubber band sits on top of the tiles: translucent accent fill, crisp 1 px border
+        if (banding)
+        {
+            var band = BandClientRect();
+            if (band.Width > 0 && band.Height > 0)
+            {
+                g.SmoothingMode = SmoothingMode.None;
+                using var fill = new SolidBrush(Color.FromArgb(48, pal.Accent));
+                g.FillRectangle(fill, band);
+                using var pen = new Pen(pal.Accent);
+                g.DrawRectangle(pen, band.X, band.Y, band.Width - 1, band.Height - 1);
+            }
+        }
+
         // Ask the workers for what is missing: visible tiles first, then rows above/below.
         int pf = PrefetchRows * cols;
         int rangeFirst = Math.Max(0, first - pf);
@@ -517,12 +684,15 @@ sealed class ThumbGrid : Control, IThemeAware
 
         if (i < 0)
         {
-            if (e.Button == MouseButtons.Left && !ctrl && !shift && selection.Count > 0)
+            if (e.Button != MouseButtons.Left) return;
+            if (!ctrl && !shift && selection.Count > 0)
             {
                 selection.Clear();
                 Invalidate();
                 SelectionChanged?.Invoke();
             }
+            // empty space: start the rubber band (Ctrl toggles, Shift adds to the current selection)
+            BeginBand(e.Location, ctrl ? BandMode.Toggle : shift ? BandMode.Add : BandMode.Replace);
             return;
         }
 
@@ -566,10 +736,33 @@ sealed class ThumbGrid : Control, IThemeAware
     protected override void OnMouseUp(MouseEventArgs e)
     {
         base.OnMouseUp(e);
+        if (banding)
+        {
+            if (e.Button != MouseButtons.Left) return;   // a right click in the middle of a drag is ignored
+            bandPointer = e.Location;
+            UpdateBand();
+            EndBand();
+            return;
+        }
         if (e.Button != MouseButtons.Right || session == null) return;
         int i = HitTest(e.Location);
         if (i >= 0) ItemContext?.Invoke(i, PointToScreen(e.Location));
         else BackgroundContext?.Invoke(PointToScreen(e.Location));
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        if (!banding) return;
+        bandPointer = e.Location;
+        UpdateBand();
+    }
+
+    /// <summary>Capture lost (Alt+Tab, a modal dialog): the drag is over, keep what was already selected.</summary>
+    protected override void OnMouseCaptureChanged(EventArgs e)
+    {
+        base.OnMouseCaptureChanged(e);
+        if (banding && !Capture) EndBand();
     }
 
     /// <summary>Menu key / Shift+F10: menu for the focused tile, shown at its centre.</summary>
@@ -601,6 +794,7 @@ sealed class ThumbGrid : Control, IThemeAware
     {
         base.OnMouseWheel(e);
         SetScroll(scroll - e.Delta * cellH / 240);
+        if (banding) UpdateBand();   // the band is anchored to the content, so the wheel does not break it
     }
 
     protected override bool IsInputKey(Keys keyData)
@@ -708,6 +902,8 @@ sealed class ThumbGrid : Control, IThemeAware
         {
             pump.Stop();
             pump.Dispose();
+            bandTimer.Stop();
+            bandTimer.Dispose();
             ClearCache();
         }
         base.Dispose(disposing);

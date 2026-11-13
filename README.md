@@ -13,7 +13,7 @@ compact on-disk cache, and the next time you open that folder everything appears
 
 - **Explorer-style layout** – folder tree + thumbnail grid, clickable breadcrumb address bar (› lists subfolders, click the empty part to type a path), back / forward / up, drag & drop a folder or photo onto the window.
 - **Subfolders as tiles** with a preview of the first photos inside; going *Up* selects the folder you came from.
-- **Explorer-style selection** – Ctrl+click, Shift+click, Shift+arrows, Ctrl+A; `Del` sends to the Recycle Bin, `Shift+Del` deletes permanently (Windows asks). Works in the full-screen viewer too, handy for culling.
+- **Explorer-style selection** - rubber-band drag over the empty space (Ctrl adds/removes, Shift adds to the current selection), Ctrl+click, Shift+click, Shift+arrows, Ctrl+A; `Del` sends to the Recycle Bin, `Shift+Del` deletes permanently (Windows asks). Works in the full-screen viewer too, handy for culling.
 - **Live updates** – new, deleted, renamed or rewritten photos show up by themselves (a file still being copied gets its thumbnail once it is complete); scroll position and selection stay put.
 - **Built for huge folders** – the grid is fully virtual, so 50,000 photos in one folder cost no more than 50.
 - **Instant thumbnails from a persistent cache** – open a folder a second time and all previews are already there.
@@ -33,6 +33,7 @@ Supported formats: JPEG, PNG, BMP, GIF, TIFF, ICO, JPEG XR and – if the corres
 |---|---|---|
 | Grid | arrows, `PgUp`/`PgDn`, `Home`/`End` | move selection |
 | Grid | `Enter`, double click | open photo / open folder |
+| Grid | drag on empty space | select a group with the rubber band (Ctrl adds/removes, Shift adds) |
 | Grid | Ctrl+click, Shift+click, `Shift`+arrows, `Ctrl+A` | multiple selection |
 | Grid | `Del` / `Shift+Del` | to Recycle Bin / delete permanently (asks, "No" by default) |
 | Grid | right click, `Menu`, `Shift+F10` | the standard Explorer menu (Open with, Send to, Copy, Properties…) plus *View in Skimmer* and *Copy path* |
