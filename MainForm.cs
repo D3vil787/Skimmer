@@ -258,6 +258,7 @@ sealed class MainForm : Form, IThemeAware
         grid.ItemContext += ShowItemMenu;
         grid.BackgroundContext += ShowBackgroundMenu;
         grid.DeleteRequested += DeleteSelected;
+        grid.ZoomRequested += ZoomTiles;
 
         // ---- split
         split.Dock = DockStyle.Fill;
@@ -633,6 +634,16 @@ sealed class MainForm : Form, IThemeAware
         {
             fsTimer.Start();   // changes that arrived while the viewer was open
         }
+    }
+
+    /// <summary>
+    /// Ctrl+wheel over the grid: one notch moves the size slider by one step, so the
+    /// toolbar slider stays the single source of truth (and the value is saved on exit).
+    /// </summary>
+    void ZoomTiles(int notches)
+    {
+        int step = Math.Max(1, trk.SmallChange);
+        trk.Value = Math.Clamp(trk.Value + notches * step, trk.Minimum, trk.Maximum);
     }
 
     void OnSelectionChanged()

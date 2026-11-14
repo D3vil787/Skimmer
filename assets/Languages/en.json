@@ -12,7 +12,7 @@
   "tip.refresh": "Refresh (F5)",
   "tip.settings": "Settings",
   "tip.desc": "Sort order",
-  "tip.size": "Thumbnail size",
+  "tip.size": "Thumbnail size (Ctrl + wheel)",
   "sort.name": "By name",
   "sort.date": "By date",
   "sort.size": "By size",

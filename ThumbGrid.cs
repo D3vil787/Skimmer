@@ -44,12 +44,15 @@ sealed class ThumbGrid : Control, IThemeAware
     Point bandPointer;   // last mouse position, client coordinates (may lie outside the grid)
     Point bandOrigin;    // where the drag started, content coordinates
     HashSet<int> bandBase;   // selection at the start of the drag (Shift / Ctrl)
+    int zoomAccum;           // Ctrl+wheel remainder, high-resolution wheels report fractions of a notch
 
     public event Action<int> ItemActivated;
     public event Action SelectionChanged;
     public event Action<int, Point> ItemContext;
     public event Action<Point> BackgroundContext;   // right click on the empty part of the grid
     public event Action<bool> DeleteRequested;   // true = permanent (Shift+Del)
+    /// <summary>Ctrl+wheel over the grid: signed number of notches, positive = larger tiles.</summary>
+    public event Action<int> ZoomRequested;
 
     public ThumbGrid()
     {
@@ -793,8 +796,32 @@ sealed class ThumbGrid : Control, IThemeAware
     protected override void OnMouseWheel(MouseEventArgs e)
     {
         base.OnMouseWheel(e);
+        if ((ModifierKeys & Keys.Control) != 0)
+        {
+            // Ctrl+wheel zooms the tiles instead of scrolling. Not while a rubber band is
+            // being dragged: changing the cell size would detach it from the pointer.
+            if (banding) return;
+            int notches = WheelNotches(ref zoomAccum, e.Delta);
+            if (notches != 0) ZoomRequested?.Invoke(notches);
+            return;
+        }
+
+        zoomAccum = 0;
         SetScroll(scroll - e.Delta * cellH / 240);
         if (banding) UpdateBand();   // the band is anchored to the content, so the wheel does not break it
+    }
+
+    /// <summary>
+    /// A wheel notch is 120 units; precision wheels and touchpads send fractions of it,
+    /// so the remainder is kept until a whole notch is reached. Truncation is symmetric,
+    /// which keeps zooming in and out at the same speed.
+    /// </summary>
+    internal static int WheelNotches(ref int accumulator, int delta)
+    {
+        accumulator += delta;
+        int notches = accumulator / 120;
+        accumulator -= notches * 120;
+        return notches;
     }
 
     protected override bool IsInputKey(Keys keyData)
